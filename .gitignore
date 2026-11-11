@@ -4,3 +4,4 @@ release/*
 !release/web/
 *.log
 .DS_Store
+__pycache__/

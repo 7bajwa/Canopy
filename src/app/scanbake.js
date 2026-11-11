@@ -46,7 +46,8 @@ function dataUrl(img) {
 
 export function makeScanBake({ view, toast }) {
   const o = { scan: '', spline: '', width: 1024, pow2: false, depth: 4, strength: 2, flipV: false, fit: true };
-  let panel = null; let info = null;
+  let panel = null; let info = null; let listed = '';
+  const nodeList = () => doc.graph.nodes.filter((n) => n.type === 'Mesh' || n.type === 'Spline').map((n) => n.id + n.name).join('|');
 
   function measure() {
     const s = scanMesh(view, o.scan); const P = splinePts(o.spline);
@@ -152,6 +153,7 @@ export function makeScanBake({ view, toast }) {
   }
 
   function draw() {
+    listed = nodeList();
     const scans = doc.graph.nodes.filter((n) => n.type === 'Mesh');
     const splines = doc.graph.nodes.filter((n) => n.type === 'Spline');
     if (!scans.some((n) => n.id === o.scan)) o.scan = scans.find((n) => n.params.shape === 'imported')?.id || scans[0]?.id || '';
@@ -186,5 +188,7 @@ export function makeScanBake({ view, toast }) {
       draw();
       panel.show();
     },
+    // Meshes imported or Splines added while the panel is open show up in its lists.
+    refresh() { if (panel?.isOpen() && nodeList() !== listed) draw(); },
   };
 }

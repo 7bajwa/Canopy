@@ -70,6 +70,17 @@ export function gradient(src, choice, ctx) {
   return out;
 }
 
+// The two extra UV sets the Canopy Bridge add-on reads in Blender: CanopyWind (flutter, phase) and CanopyBend
+// (bend, 1 on leaves), so the vertex colors keep the plant's own colors.
+export function blenderUvs(src, ctx) {
+  const [fl, ph, bend] = ['leaf', 'random', 'bend'].map((c) => gradient(src, c, ctx));
+  const n = fl.length; const wind = new Float32Array(n * 2); const bnd = new Float32Array(n * 2);
+  const leaf = src.kind === 'leaf' ? 1 : 0;
+  for (let i = 0; i < n; i++) { wind[i * 2] = fl[i]; wind[i * 2 + 1] = ph[i]; bnd[i * 2] = bend[i]; bnd[i * 2 + 1] = leaf; }
+  return [wind, bnd];
+}
+export const BLENDER_UVS = ['CanopyWind', 'CanopyBend'];
+
 // RGBA per point: each channel either keeps the mesh's own color (alpha 1) or carries a wind gradient.
 export function windColors(src, channels, ctx) {
   const n = src.position.length / 3; const out = new Float32Array(n * 4);

@@ -7,8 +7,9 @@ import { facesOf } from './quads.js';
 import { writeFbx } from './fbx.js';
 import { zipStore } from './zip.js';
 import { download, safeName, saveDocument } from './io.js';
-import { lineOf, lineExtents, windColors, pivotElements, pivotTextures, pivotUvs, bakeVat, piecesOf, pick } from './exportkit.js';
+import { lineOf, lineExtents, windColors, pivotElements, pivotTextures, pivotUvs, bakeVat, piecesOf, pick, blenderUvs, BLENDER_UVS } from './exportkit.js';
 import { WIND_STRIDE } from '../engine/wind.js';
+import { lifeOf } from '../engine/life.js';
 
 const opts = { layout: 'custom', format: 'glb', pack: true, group: 'node', ch: ['none', 'none', 'none', 'none'], pivot: false, vat: false, frames: 30, seconds: 2, strength: 5, rig: false, batch: 'separate' };
 const GRADIENTS = [['none', 'Keep color'], ['height', 'Height, bottom to top'], ['branch', 'Branch, start to end'], ['leaf', 'Leaf, start to end (flutter)'], ['random', 'Random per piece (phase)'], ['bend', 'Bend, trunk to tips']];
@@ -19,6 +20,7 @@ const LAYOUTS = {
   canopy: { label: 'Canopy: R flutter, G phase, B bend (Unity, Unreal, Godot shaders included)', ch: ['leaf', 'random', 'bend', 'none'], pivot: false },
   godot: { label: 'Godot tutorial: R sway (bend), G phase', ch: ['bend', 'random', 'none', 'none'], pivot: false },
   unreal: { label: 'Unreal Pivot Painter 2 + Canopy colors', ch: ['leaf', 'random', 'bend', 'none'], pivot: true },
+  blender: { label: 'Blender: season and wind node groups (Canopy Bridge add-on)', ch: ['none', 'none', 'none', 'none'], pivot: false },
   none: { label: 'No wind data (keep colors)', ch: ['none', 'none', 'none', 'none'], pivot: false },
 };
 
@@ -124,7 +126,8 @@ function partsOf(view) {
   let lo = Infinity; let hi = -Infinity;
   for (const s of srcs) for (let i = 1; i < s.position.length; i += 3) { lo = Math.min(lo, s.position[i]); hi = Math.max(hi, s.position[i]); }
   const ctx = { table, ext: lineExtents(srcs, table), lo, hi };
-  const pp = opts.pivot ? pivotElements(srcs, table) : null;
+  const forBlender = opts.layout === 'blender';
+  const pp = opts.pivot && !forBlender ? pivotElements(srcs, table) : null;
   const tinted = opts.ch.some((c) => c !== 'none');
   // Leaves ride the bone of the branch they grow on.
   const leafLines = new Set();
@@ -136,7 +139,8 @@ function partsOf(view) {
       position: src.position, normal: src.normal, uv: src.uv, color: src.color, index: src.index, wind: src.wind,
       quadTri: src.quads ? new Uint8Array(src.index.length / 3).fill(1) : null,
       colorA: tinted ? windColors(src, opts.ch, ctx) : null,
-      uvs: [pp ? pivotUvs(src, pp) : src.uv1 || null],
+      uvs: forBlender ? blenderUvs(src, ctx) : [pp ? pivotUvs(src, pp) : src.uv1 || null],
+      uvNames: forBlender ? BLENDER_UVS : null,
     };
   });
   if (opts.group === 'instances') parts = parts.flatMap((p) => instancesOf(p, table));
@@ -180,11 +184,12 @@ function merge(parts) {
     for (let t = 0; t < p.index.length / 3; t++) { polyMat.push(m); quadTri.push(p.quadTri ? 1 : 0); }
     base += p.position.length / 3;
   });
-  const anyA = parts.some((p) => p.colorA); const anyUv = parts.some((p) => p.uvs[0]);
+  const anyA = parts.some((p) => p.colorA);
+  const nUv = Math.max(0, ...parts.map((p) => p.uvs.length));
   return {
     name: safeName(doc.name), material: parts.map((p) => p.material), kind: 'mixed', leafLines: parts[0]?.leafLines,
     position: cat('position', 3, 0), normal: cat('normal', 3, 0), uv: cat('uv', 2, 0), color: cat('color', 3, 1),
-    colorA: anyA ? cat((p) => p.colorA || windColorsOf(p), 4, 1) : null, uvs: [anyUv ? cat((p) => p.uvs[0], 2, 0) : null],
+    colorA: anyA ? cat((p) => p.colorA || windColorsOf(p), 4, 1) : null, uvs: Array.from({ length: nUv }, (_, k) => (parts.some((p) => p.uvs[k]) ? cat((p) => p.uvs[k], 2, 0) : null)), uvNames: parts[0]?.uvNames,
     wind: parts.every((p) => p.wind) ? cat('wind', 3, 0) : null, index: Uint32Array.from(index), polyMat, groups, quadTri: Uint8Array.from(quadTri),
   };
 }
@@ -249,12 +254,15 @@ function combineSnapshots(list) {
 const BRIDGE = 'http://127.0.0.1:9787/import';
 // One FBX with its textures inside, posted to the Blender add-on.
 async function sendToBlender(view) {
-  const keep = { format: opts.format, pack: opts.pack, vat: opts.vat, pivot: opts.pivot };
-  Object.assign(opts, { format: 'fbx', pack: true, vat: false, pivot: false });
+  const keep = { format: opts.format, pack: opts.pack, vat: opts.vat, pivot: opts.pivot, layout: opts.layout };
+  Object.assign(opts, { format: 'fbx', pack: true, vat: false, pivot: false, layout: 'blender' });
   try {
     const { parts } = partsOf(view);
     const data = fbx(parts, await pictures(parts), true);
-    const res = await fetch(`${BRIDGE}?name=${encodeURIComponent(safeName(doc.name))}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: data });
+    // The plant's Age & Season values become the scene's Season and Health sliders in Blender.
+    const L = lifeOf(doc.graph.settings);
+    const q = `name=${encodeURIComponent(safeName(doc.name))}${L ? `&season=${L.season}&health=${L.health}` : ''}`;
+    const res = await fetch(`${BRIDGE}?${q}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: data });
     if (!res.ok) throw new Error(await res.text());
   } finally { Object.assign(opts, keep); }
 }
@@ -358,7 +366,7 @@ function fbx(parts, pics, packed) {
     const mats = [p.material].flat();
     return {
       name: p.name, position: p.position, normal: p.normal, uv: p.uv, color: p.color, colorA: p.colorA, index: p.index, quadTri: p.quadTri,
-      uvs: p.uvs.filter(Boolean), rgb: rgbOf(mats[0]), polyMat: p.polyMat,
+      uvs: p.uvs.filter(Boolean), uvNames: p.uvNames, rgb: rgbOf(mats[0]), polyMat: p.polyMat,
       translation: p.translation && [p.translation.x, p.translation.y, p.translation.z],
       rotation: p.quaternion && (e.setFromQuaternion(p.quaternion, 'XYZ'), [e.x, e.y, e.z].map((r) => (r * 180) / Math.PI)),
       materials: mats.map((m, i) => ({

@@ -819,6 +819,7 @@ on('selection', () => { graph.invalidate(); view.highlight(); });
 on('result', (res) => {
   renderer.refresh();
   view.apply(res);
+  scanBake.refresh();
   const s = res.stats;
   $('#stats').textContent = `${s.lines.toLocaleString('en')} lines · ${s.tris.toLocaleString('en')} triangles · ${s.ms} ms${s.draft ? ' · draft' : ''}`;
   const warn = $('#warn');

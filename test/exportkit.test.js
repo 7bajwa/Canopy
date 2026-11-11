@@ -107,3 +107,16 @@ test('bend rises from the trunk foot through each level to the tips', async () =
   assert.ok(Math.abs(g[1] - 0.5) < 1e-6, `trunk top is half way: ${g[1]}`);
   assert.ok(Math.abs(g[2] - 1) < 1e-6, `branch tip is 1: ${g[2]}`);
 });
+
+test('Blender UV sets carry flutter and phase, then bend and the leaf flag', async () => {
+  const { blenderUvs, gradient } = await import('../src/app/exportkit.js');
+  const { WIND_STRIDE } = await import('../src/engine/wind.js');
+  const table = new Float32Array(WIND_STRIDE);
+  table.set([0, 0, 0, -1, 0, 1, 0], 0);
+  const ctx = { table, ext: new Map([[0, 10]]), lo: 0, hi: 10 };
+  const src = { kind: 'leaf', position: new Float32Array([0, 0, 0, 0, 10, 0]), wind: new Float32Array(6) };
+  const [wind, bend] = blenderUvs(src, ctx);
+  assert.deepEqual([...wind].map((v) => +v.toFixed(4)), [0, gradient(src, 'random', ctx)[0], 1, gradient(src, 'random', ctx)[1]].map((v) => +v.toFixed(4)));
+  assert.equal(bend[1], 1, 'leaf flag');
+  assert.equal(blenderUvs({ ...src, kind: 'bark' }, ctx)[1][1], 0, 'bark is not a leaf');
+});

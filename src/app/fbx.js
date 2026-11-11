@@ -87,7 +87,7 @@ function geometryNode(id, m) {
   }
   const layer = (kind, k = 0) => node('LayerElement', [], [node('Type', [S(kind)]), node('TypedIndex', [I(k)])]);
   const uvNode = (set, k) => node('LayerElementUV', [I(k)], [
-    node('Version', [I(101)]), node('Name', [S(k ? `UVMap${k}` : 'UVMap')]),
+    node('Version', [I(101)]), node('Name', [S(k ? m.uvNames?.[k - 1] || `UVMap${k}` : 'UVMap')]),
     node('MappingInformationType', [S('ByPolygonVertex')]), node('ReferenceInformationType', [S('IndexToDirect')]),
     node('UV', [doubles(set)]), node('UVIndex', [ints(corners)]),
   ]);

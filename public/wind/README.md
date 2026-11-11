@@ -37,3 +37,12 @@ Then use Epic's Pivot Painter 2 material functions (*PivotPainter2FoliageShader*
 - `canopy_wind.gdshader`: a Godot 4 spatial shader with alpha cutout.
 - `CanopyWind.hlsl`: a Unity Shader Graph *Custom Function* (File mode, name `CanopyWind`). Feed its output into the master stack's Vertex Position.
 - `CanopyWind_Unreal.hlsl`: the body of a Material *Custom* node. Plug its output into World Position Offset.
+
+## Blender
+
+Use the Canopy Bridge add-on (Export → "Get the Blender add-on"). Send to Blender, or export FBX with Layout
+**Blender** and use **Import Canopy FBX** in the add-on's Canopy tab. The plant gets a **Canopy Season** shader
+group on every material and a **Canopy Wind** geometry nodes modifier, both driven by sliders in the Canopy tab
+(Season, Health, Wind strength, speed, direction and leaf flutter). They read two extra UV sets instead of vertex
+colors: `CanopyWind` (U flutter, V phase) and `CanopyBend` (U bend, V 1 on leaves).
+
