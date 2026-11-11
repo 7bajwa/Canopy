@@ -24,6 +24,7 @@ import { openExport } from './app/exportdlg.js';
 import { makeSeedPresets } from './app/seedpresets.js';
 import { makeRender } from './app/renderui.js';
 import { makeScanBake } from './app/scanbake.js';
+import { makeLife } from './app/lifeui.js';
 import { applyTheme, themeOf } from './app/themes.js';
 import { WIND_PRESETS } from './graph/defs-unified.js';
 import { dockAt } from './app/dock.js';
@@ -356,6 +357,7 @@ function setLayout(mode) {
 
 // ---- Parts ----
 const xfGizmo = new XfGizmo(view);
+const life = makeLife();
 const scanBake = makeScanBake({ view, toast: (m, ms) => toast(m, ms) });
 const renderer = makeRender({ view, prefs, setPref: (k, v) => setPref(k, v), toast: (m) => toast(m), download: (u) => downloadImage(u), hide: () => [xfGizmo.helper] });
 const ui = {
@@ -1034,6 +1036,7 @@ const actions = {
   render: () => renderer.quick(),
   renderSettings: () => renderer.open(),
   scanBake: () => scanBake.open(),
+  life: () => life.open(),
   undo, redo,
   prefs: () => openSettings(settingsEl, prefs, setPref),
   seed() {

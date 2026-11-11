@@ -3,6 +3,7 @@ import { hash, hexToRgb, blendColor, bakeCurve, sampleCurve, clamp, smooth, norm
 import { sampleLine, newSample, tOf, ensureFrames, pointAt } from './line.js';
 import { inlineColors, inlineBlend } from './builtins.js';
 import { windWeight } from './wind.js';
+import { seasonTint } from './life.js';
 
 export class MeshBuf {
   constructor() {
@@ -91,6 +92,15 @@ export function compsOf(ev, b) {
   comps.vc.unshift(...inlineColors(b));
   if (b.type === 'CylinderMesh' && P.blend && !comps.blend && ev.blendOn) comps.blend = inlineBlend(b);
   comps.color = colorFunction(ev, comps);
+  if (ev.life) {
+    // Season and Health tint leaves one by one; withered branches go gray and dark.
+    const base = comps.color; const L = ev.life;
+    comps.color = (line, t, out, out2) => {
+      base(line, t, out, out2);
+      if (line.node.params.leafy) { const k = seasonTint(L.season, line.season ?? 0.5, L.health); out[0] *= k[0]; out[1] *= k[1]; out[2] *= k[2]; }
+      else if (line.withered) { const g = (out[0] + out[1] + out[2]) / 3; out[0] = (out[0] * 0.5 + g * 0.5) * 0.8; out[1] = (out[1] * 0.5 + g * 0.5) * 0.8; out[2] = (out[2] * 0.5 + g * 0.5) * 0.8; }
+    };
+  }
   comps.hasChannel = comps.vc.some((n) => n.type === 'VCMapChannel' && n.params.channel > 0);
   return comps;
 }

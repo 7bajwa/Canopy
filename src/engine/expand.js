@@ -126,6 +126,8 @@ function meshBuilder(graph, n, parts, nodes, links, pathId) {
       nodes.push(makeNode(id, 'LeavesMesh', n.on, { ...common, meshType: kind, outline: { pts: [[0, 1, 'c'], [1, 1, 'c']] } }));
     }
     links.push({ id: `${id}:in`, from: pathId, fromSock: 'mesh', to: id, toSock: 'in' });
+    // Lines that carry leaves: the Season and Health sliders work on them (see engine/life.js).
+    if (kind !== 'tube') { const path = nodes.find((x) => x.id === pathId); if (path) path.params.leafy = true; }
   }
 }
 

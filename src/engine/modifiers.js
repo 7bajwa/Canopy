@@ -42,7 +42,7 @@ function turnToward(d, target, amount) {
   return [[ax[0] / l, ax[1] / l, ax[2] / l], Math.min(angle, amount)];
 }
 
-function cutAt(line, s, keepLength, capEnd) {
+export function cutAt(line, s, keepLength, capEnd) {
   const { pts, len: L, n } = line;
   if (s <= 0) { line.dead = true; return; }
   let k = 0;

@@ -15,6 +15,7 @@ import { applyMeshMods, avoidMesh } from './meshmods.js';
 import { applyMods, computeNormals } from './primitive.js';
 import { windTable } from './wind.js';
 import { bakeOcclusion } from './ao.js';
+import { lifeOf, lifeLine } from './life.js';
 
 const AT = { start: 0, mid: 0.5, end: 1 };
 
@@ -34,6 +35,8 @@ export class Evaluator {
     this.camera = opts.camera || [0, 0, 500];
     const s = graph.settings || {};
     this.seed = s.seed ?? 1;
+    // Age, Season and Health sliders, when turned on.
+    this.life = lifeOf(s);
     this.unit = s.unitCalc || 100;
     this.segLimit = s.segLimit || 400;
     this.maxSegs = s.maxSegments || 400000;
@@ -380,6 +383,7 @@ export class Evaluator {
       }
       const line = this.newLine(node, sp, new Float32Array(pts), L, nextId);
       this.applyChain(dirChain, line);
+      if (this.life && !line.dead) lifeLine(this.life, line, this.seed);
       if (line.dead) continue;
       if (sp.axisScale) {
         // Scale X, Y and Z stretch the finished line's shape along the transform's axes (its own or the world's), around its base.
