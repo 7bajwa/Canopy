@@ -1,0 +1,28 @@
+{
+  "name": "canopy-tree-editor",
+  "private": true,
+  "version": "0.42.0",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/make-docs.mjs && node scripts/make-samples.mjs && vite build",
+    "test": "node --test",
+    "serve:lan": "vite preview --host --port 4173",
+    "pc:build": "vite build && npx --yes @electron/packager@18 . Canopy --platform=win32 --arch=x64 --out=release/.win-tmp --overwrite --electron-version=33.4.11 --icon=build/icon.ico --ignore=\"^/(src|test|scripts|public|android|release|node_modules)\" && node scripts/copy-win.cjs",
+    "android:setup": "npm i -D @capacitor/cli@7 @capacitor/core@7 @capacitor/android@7 && npx cap add android",
+    "android:build": "vite build && npx cap sync android && cd android && .\\gradlew.bat assembleDebug && cd .. && node scripts/copy-apk.cjs",
+    "web:build": "node scripts/make-docs.mjs && node scripts/make-samples.mjs && vite build && node scripts/copy-web.cjs",
+    "docs": "node scripts/make-docs.mjs",
+    "ai:mcp": "node ai/mcp-server.mjs"
+  },
+  "main": "electron/main.cjs",
+  "dependencies": {
+    "@fontsource/poppins": "^5.0.0",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^7.6.10",
+    "@capacitor/cli": "^7.6.10",
+    "@capacitor/core": "^7.6.10",
+    "vite": "^6.0.0"
+  }
+}

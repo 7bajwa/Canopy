@@ -1,0 +1,8 @@
+node_modules/
+dist/
+release/*
+!release/web/
+# GitHub Pages site is its own repo (7bajwa/Canopy)
+Canopy/
+*.log
+.DS_Store

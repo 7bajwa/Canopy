@@ -1,0 +1,6 @@
+{
+  "appId": "com.canopy.treeeditor",
+  "appName": "Canopy",
+  "webDir": "dist",
+  "android": { "backgroundColor": "#11160f" }
+}
