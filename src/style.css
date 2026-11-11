@@ -523,3 +523,11 @@ body[data-bar=left] .tools .sep, body[data-bar=right] .tools .sep { width: auto;
 #xfbar button { padding: 5px 10px; border-radius: 5px; }
 #xfbar button[aria-pressed=true] { background: rgba(74, 134, 16, .7); }
 body[data-bar=bottom] #xfbar { bottom: 64px; }
+
+/* Floating panels (Variations, Render settings): stay open beside the views, dragged by the title bar. */
+.float-panel { position: fixed; top: 70px; right: 16px; z-index: 11; max-width: calc(100vw - 24px); max-height: calc(100vh - 90px); display: flex; flex-direction: column; background: var(--side); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 12px 40px rgba(0, 0, 0, .55); }
+.float-panel[hidden] { display: none; }
+.float-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--line); cursor: move; touch-action: none; user-select: none; }
+.float-body { overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.float-body .field { grid-template-columns: 130px 1fr; }
+.render-preview { width: 100%; background: repeating-conic-gradient(#222 0 25%, #2c2c2c 0 50%) 0 0 / 16px 16px; border: 1px solid var(--line); border-radius: var(--r); }

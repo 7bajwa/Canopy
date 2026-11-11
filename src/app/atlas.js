@@ -112,7 +112,7 @@ const SPROUT_COLORS = ['#5cc8ff', '#ff9f43', '#c56cf0', '#7bed9f', '#ff6b81', '#
 const levelColor = (lv) => doc.graph.settings?.sproutColors?.[lv - 1] || SPROUT_COLORS[lv - 1];
 
 const HINT = {
-  shape3d: 'Drag a point to move it in 3D; drag anywhere else to turn the view, scroll to zoom. With "Texture follows" the picture moves with the point; without it only the shape changes.',
+  shape3d: 'Drag a point to move it in 3D; drag anywhere else to turn the view, scroll to zoom. With Preserve UVs on, the texture stretches with the shape; off, the point moves on the picture too.',
   select: 'Tap a mesh to pick it. Drag it, or its middle dot, to move it; drag the dot on its ring to turn and scale it. Its name (tap to rename), copy, delete and meshing sit around it.',
   edit: 'Drag a point to move it. Drag across the mesh (or Shift-drag anywhere) to box-pick points, Shift-click to add one; drag a picked point to move them all. Click an edge or inside the picked mesh to add a point, double-click or right-click one to remove it. The red arrow is the pivot and the way the leaf points.',
   add: 'Drag from where the stem meets the leaf to its tip. A simple leaf shape appears around the line; then move its points to fit the picture.',
@@ -208,6 +208,15 @@ export class AtlasEditor {
     if (this.active >= this.cuts.length) this.active = -1;
     this.draw();
     commit();
+  }
+
+  // Opens on one cutout with a tool, e.g. from the packer straight into 3D vertex editing.
+  async openOn(material, cutId, tool = 'shape3d') {
+    await this.open(material);
+    const i = (material.cutouts || []).findIndex((c) => c.id === cutId);
+    if (i >= 0) this.active = i;
+    this.setTool(tool);
+    this.draw();
   }
 
   async open(material) {

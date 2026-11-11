@@ -450,36 +450,44 @@ export const MODIFIERS = {
       }
       return;
     }
-    // Push: each point out to the clearance, scaled by Amount, fading over the falloff; then smoothed along
-    // the line over Spread so it bends aside rather than kinking.
+    // Push: each point out to the clearance (by what it lacks, scaled by Amount), fading over the falloff; then
+    // smoothed along the line over Spread so it bends aside rather than kinking. Smoothing thins the push, so it
+    // runs again (up to four passes) until no point past the base is still inside the clearance.
     const n = line.n; const push = new Float32Array(n * 3);
-    let any = false;
-    for (let i = 1; i < n; i++) {
-      if (line.len[i] < skip) continue;
-      c.t = line.length > 0 ? line.len[i] / line.length : 0;
-      const h = nearest(pts[i * 3], pts[i * 3 + 1], pts[i * 3 + 2]);
-      if (!h) continue;
-      const w = h[3] <= D ? 1 : F > 0 ? 1 - (h[3] - D) / F : 0;
-      if (w <= 0) continue;
-      const away = norm([pts[i * 3] - h[0], pts[i * 3 + 1] - h[1], pts[i * 3 + 2] - h[2]]);
-      const m = clamp(q.strength(c) / 100, 0, 1) * w * D;
-      push[i * 3] = away[0] * m; push[i * 3 + 1] = away[1] * m; push[i * 3 + 2] = away[2] * m; any = true;
-    }
-    if (!any) return;
     const spread = Math.max(0, +(P.spread ?? 20));
-    let lo = 1;
-    for (let i = 1; i < n; i++) {
-      let sx = 0; let sy = 0; let sz = 0; let sw = 0;
-      // Only neighbours within three spreads count, found with a sliding window.
-      while (line.len[i] - line.len[lo] > spread * 3) lo++;
-      for (let k = lo; k < n && line.len[k] - line.len[i] <= spread * 3; k++) {
-        const g = spread > 0 ? Math.exp(-(((line.len[k] - line.len[i]) / spread) ** 2)) : k === i ? 1 : 0;
-        if (g < 1e-3) continue;
-        sx += push[k * 3] * g; sy += push[k * 3 + 1] * g; sz += push[k * 3 + 2] * g; sw += g;
+    for (let pass = 0; pass < 4; pass++) {
+      push.fill(0);
+      let any = false; let inside = false;
+      for (let i = 1; i < n; i++) {
+        if (line.len[i] < skip) continue;
+        c.t = line.length > 0 ? line.len[i] / line.length : 0;
+        const h = nearest(pts[i * 3], pts[i * 3 + 1], pts[i * 3 + 2]);
+        if (!h) continue;
+        if (h[3] < D * 0.98) inside = true;
+        const lack = h[3] < D ? D - h[3] : F > 0 ? (1 - (h[3] - D) / F) * D * 0.15 : 0;
+        if (lack <= 0) continue;
+        const away = h[3] > 1e-6 ? norm([pts[i * 3] - h[0], pts[i * 3 + 1] - h[1], pts[i * 3 + 2] - h[2]]) : [line.ux?.[i] ?? 1, 0, 0];
+        const m = clamp(q.strength(c) / 100, 0, 1) * lack * (pass ? 1 : 1.15);
+        push[i * 3] = away[0] * m; push[i * 3 + 1] = away[1] * m; push[i * 3 + 2] = away[2] * m; any = true;
       }
-      if (sw) { pts[i * 3] += sx / sw; pts[i * 3 + 1] += sy / sw; pts[i * 3 + 2] += sz / sw; }
+      if (!any) break;
+      // Spread: each point takes the strongest push near it, faded by distance along the line, so the line bows
+      // out smoothly around a touch at full strength instead of averaging it away.
+      const out = new Float32Array(n * 3);
+      let lo = 1;
+      for (let i = 1; i < n; i++) {
+        while (line.len[i] - line.len[lo] > spread * 3) lo++;
+        let best = 0;
+        for (let k = lo; k < n && line.len[k] - line.len[i] <= spread * 3; k++) {
+          const g = spread > 0 ? Math.exp(-(((line.len[k] - line.len[i]) / spread) ** 2)) : k === i ? 1 : 0;
+          const mag = Math.hypot(push[k * 3], push[k * 3 + 1], push[k * 3 + 2]) * g;
+          if (mag > best) { best = mag; out[i * 3] = push[k * 3] * g; out[i * 3 + 1] = push[k * 3 + 1] * g; out[i * 3 + 2] = push[k * 3 + 2] * g; }
+        }
+      }
+      for (let i = 0; i < n * 3; i++) pts[i] += out[i];
+      finishLine(line);
+      if (!inside) break;
     }
-    finishLine(line);
   },
 
   Dir_ObjSlice(ev, node, line, q) {

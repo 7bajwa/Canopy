@@ -278,3 +278,36 @@ export function packChannels(maps, spec, width, height) {
   for (let i = 0; i < width * height; i++) for (let c = 0; c < 4; c++) out.data[i * 4 + c] = f[c](i);
   return out;
 }
+
+// Picture filters for renders. Exposure in stops, gamma, warm/cool temperature and green/magenta tint (-1..1),
+// vibrance (boosts dull colors more than strong ones), a vignette (amount 0..1, softness 0..1) and film grain, on
+// top of colorAdjust's brightness, contrast, saturation and sharpen. Alpha is left alone.
+export const POST_DEFAULTS = { exposure: 0, gamma: 1, temperature: 0, tint: 0, vibrance: 0, brightness: 0, contrast: 0, saturation: 1, sharpen: 0, vignette: 0, vignetteSoft: 0.5, grain: 0 };
+export function postFilter(img, f = {}) {
+  const o = { ...POST_DEFAULTS, ...f };
+  const out = colorAdjust(img, o);
+  const { width: w, height: h } = out; const d = out === img ? new Uint8ClampedArray(img.data) : out.data;
+  const ex = 2 ** o.exposure; const gi = 1 / Math.max(o.gamma, 0.05);
+  const wr = 1 + o.temperature * 0.2 - o.tint * 0.05; const wg = 1 + o.tint * 0.15; const wb = 1 - o.temperature * 0.2 - o.tint * 0.05;
+  const cx = w / 2; const cy = h / 2; const rmax = Math.hypot(cx, cy);
+  const inner = 1 - (0.15 + Math.min(Math.max(o.vignetteSoft, 0), 1) * 0.85);
+  let seed = 12345; const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4;
+    let r = d[i] / 255; let g = d[i + 1] / 255; let b = d[i + 2] / 255;
+    r *= ex * wr; g *= ex * wg; b *= ex * wb;
+    if (o.vibrance) {
+      const mx = Math.max(r, g, b); const l = (r + g + b) / 3; const k = o.vibrance * (1 - (mx - Math.min(r, g, b)));
+      r += (r - l) * k; g += (g - l) * k; b += (b - l) * k;
+    }
+    if (gi !== 1) { r = Math.max(r, 0) ** gi; g = Math.max(g, 0) ** gi; b = Math.max(b, 0) ** gi; }
+    if (o.vignette) {
+      const t = Math.hypot(x - cx, y - cy) / rmax;
+      const v = 1 - o.vignette * Math.min(Math.max((t - inner) / Math.max(1 - inner, 1e-3), 0), 1) ** 2;
+      r *= v; g *= v; b *= v;
+    }
+    if (o.grain) { const n = (rnd() - 0.5) * o.grain * 0.25; r += n; g += n; b += n; }
+    d[i] = r * 255; d[i + 1] = g * 255; d[i + 2] = b * 255;
+  }
+  return { width: w, height: h, data: d };
+}

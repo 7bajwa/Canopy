@@ -2,6 +2,7 @@
 import { Vector3 } from 'three';
 import { doc } from './doc.js';
 import { parseObj } from '../engine/shapes.js';
+import { zipStore, unzip } from './zip.js';
 
 export function download(name, blob) {
   const a = document.createElement('a');
@@ -17,8 +18,48 @@ export const safeName = (s) => (s || 'plant').replace(/[^\w\- ]+/g, '').trim() |
 
 export const documentText = () => JSON.stringify({ app: 'canopy', version: 1, name: doc.name, graph: doc.graph, assets: doc.assets });
 
-export function saveDocument() {
-  download(`${safeName(doc.name)}.canopy`, new Blob([documentText()], { type: 'application/json' }));
+// Saving: by default one .canopy file with every picture packed inside it. With textures "beside the file" it is a
+// .zip holding the .canopy and a textures folder the .canopy points at (open the zip to get it all back).
+export function saveDocument(textures = 'embed') {
+  const name = safeName(doc.name);
+  if (textures !== 'folder') { download(`${name}.canopy`, new Blob([documentText()], { type: 'application/json' })); return; }
+  const { text, files } = documentPackage();
+  download(`${name}.zip`, new Blob([zipStore([{ name: `${name}.canopy`, data: text }, ...files])], { type: 'application/zip' }));
+}
+
+// The document with its pictures moved out into files: assets keep their name and point at textures/<file>.
+export function documentPackage() {
+  const files = []; const assets = {};
+  const used = new Set();
+  for (const [id, a] of Object.entries(doc.assets || {})) {
+    const m = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(a?.url || '');
+    if (!m) { assets[id] = a; continue; }
+    const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }[m[1]] || 'bin';
+    let file = `textures/${safeName((a.name || id).replace(/\.\w+$/, ''))}.${ext}`;
+    for (let k = 2; used.has(file); k++) file = file.replace(/(-\d+)?\.(\w+)$/, `-${k}.$2`);
+    used.add(file);
+    files.push({ name: file, data: m[2] ? Uint8Array.from(atob(m[3]), (c) => c.charCodeAt(0)) : new TextEncoder().encode(decodeURIComponent(m[3])) });
+    assets[id] = { name: a.name, file, type: m[1] };
+  }
+  return { text: JSON.stringify({ app: 'canopy', version: 1, name: doc.name, graph: doc.graph, assets }), files };
+}
+
+// A picked file as a document: a .canopy, or a .zip made by Save with textures beside it (pictures packed back in).
+export async function readDocumentFile(f) {
+  if (!/\.zip$/i.test(f.name)) return parseDocument(await f.text());
+  const entries = await unzip(await f.arrayBuffer());
+  const main = entries.find((e) => /\.canopy$/i.test(e.name));
+  if (!main) throw new Error('That zip has no .canopy file in it.');
+  const d = parseDocument(new TextDecoder().decode(main.data));
+  for (const a of Object.values(d.assets || {})) {
+    if (!a?.file) continue;
+    const e = entries.find((x) => x.name === a.file);
+    if (!e) continue;
+    let bin = ''; for (let i = 0; i < e.data.length; i += 0x8000) bin += String.fromCharCode(...e.data.subarray(i, i + 0x8000));
+    a.url = `data:${a.type || 'image/png'};base64,${btoa(bin)}`;
+    delete a.file; delete a.type;
+  }
+  return d;
 }
 
 export function saveNodes(nodes, links) {

@@ -1,6 +1,7 @@
-// The Transform tool: a move, turn or scale gizmo on the picked Spline or Mesh node, at the base of its first
-// entity and on the axes its Transform uses (the entity's own, or the world's on the view gizmo's axes). Dragging
-// it writes the node's Position, Rotation and Scale values, so every entity of the node follows.
+// The Transform tool: a move, turn or scale gizmo in the 3D view. By default it edits one copy: click a branch, leaf
+// or mesh copy and the gizmo sits at that copy's base, on its own axes; dragging stores a per-copy move, turn and
+// scale on the node (params.inst, by the copy's key), so only that copy changes and its children follow it.
+// With "All copies" it writes the node's Position, Rotation and Scale values instead, so every copy follows.
 // The gizmo is driven by the editor's own pointer handling (the graph canvas lies over the 3D view).
 import * as THREE from 'three';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
@@ -13,6 +14,8 @@ export class XfGizmo {
   constructor(view) {
     this.view = view;
     this.on = false;
+    this.scope = 'copy';
+    this.pick = null;
     this.obj = new THREE.Object3D();
     view.scene.add(this.obj);
     // A loose element: the controls hear only what pointer() passes them.
@@ -29,6 +32,18 @@ export class XfGizmo {
   }
 
   setOn(v) { this.on = v; this.place(); }
+  setScope(v) { this.scope = v; this.place(); }
+  // The last click in the 3D view: which node and which of its copies.
+  picked(hit) { this.pick = hit ? { nodeId: hit.nodeId, inst: hit.inst || 0 } : null; }
+  // Drops the picked copy's own edit.
+  resetCopy() {
+    const n = this.target; const k = this.copyKey;
+    if (!n || !k || !n.params.inst?.[k]) return false;
+    delete n.params.inst[k];
+    if (!Object.keys(n.params.inst).length) delete n.params.inst;
+    changed({ layout: true }); commit();
+    return true;
+  }
   setMode(m) { this.tc.setMode(m); this.view.invalidate(); }
 
   node() { const n = primary(); return n && (n.type === 'Spline' || n.type === 'Mesh') ? n : null; }
@@ -38,7 +53,9 @@ export class XfGizmo {
     const n = this.on ? this.node() : null;
     const lines = doc.result?.lines;
     let i = -1;
-    if (n && lines) for (let k = 0; k < lines.owner.length; k += 2) if (lines.nodeIds[lines.owner[k]] === n.id) { i = k; break; }
+    const key = n && this.scope === 'copy' && this.pick?.nodeId === n.id ? this.pick.inst : 0;
+    if (n && lines) for (let k = 0; k < lines.owner.length; k += 2) if (lines.nodeIds[lines.owner[k]] === n.id && (!key || lines.inst?.[k] === key)) { i = k; break; }
+    this.copyKey = i >= 0 && key ? key : 0;
     this.helper.visible = i >= 0;
     this.tc.enabled = i >= 0;
     this.view.invalidate();
@@ -62,6 +79,7 @@ export class XfGizmo {
     this.obj.updateMatrixWorld();
     this.target = n;
     this.start = { pos: a.clone(), q: this.obj.quaternion.clone(), params: structuredClone(n.params) };
+    this.view.invalidate();
   }
 
   // The drag so far, from where it started, as the node's values.
@@ -69,6 +87,18 @@ export class XfGizmo {
     const n = this.target; if (!n) return;
     const s = this.start.params; const P = n.params;
     const d = this.obj.position.clone().sub(this.start.pos);
+    if (this.copyKey) {
+      const k = this.copyKey; const o = s.inst?.[k] || {};
+      const t0 = o.t || [0, 0, 0]; const q0 = new THREE.Quaternion(...(o.q || [0, 0, 0, 1])); const s0 = o.s || [1, 1, 1];
+      // The turn so far in world space, on top of the copy's earlier turn.
+      const qd = this.obj.quaternion.clone().multiply(this.start.q.clone().invert());
+      const q = qd.multiply(q0);
+      const sc = [this.obj.scale.x, this.obj.scale.y, this.obj.scale.z];
+      const r = (v) => Math.round(v * 1e4) / 1e4;
+      P.inst = { ...(P.inst || {}), [k]: { t: [t0[0] + d.x, t0[1] + d.y, t0[2] + d.z].map(r), q: [q.x, q.y, q.z, q.w].map(r), s: s0.map((v, i) => r(v * sc[i])) } };
+      regenerate({ draft });
+      return;
+    }
     ['posX', 'posY', 'posZ'].forEach((k, i) => { P[k] = (+s[k] || 0) + d.dot(this.axes[i]); });
     // The turn in the gizmo's own axes; X, then Y, then Z, as the Rotation values are read.
     const local = this.start.q.clone().invert().multiply(this.obj.quaternion);

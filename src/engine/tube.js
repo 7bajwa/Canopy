@@ -60,8 +60,9 @@ export class MeshBuf {
     };
     if (comps.blend) { out.uv1 = this.uv1.slice(0, this.nv * 2); out.blend = this.blend.slice(0, this.nv); }
     out.wind = this.wind.slice(0, this.nv * 3);
-    // Tubes and leaf blades are made of quads (two triangles each), which export joins back up.
-    out.quads = builder.type === 'CylinderMesh' || (builder.type === 'LeavesMesh' && builder.params.meshType === 'leaf');
+    // Tubes, leaves, cutouts (in quad mode) and mesh primitives are made of quads, two triangles each in a row;
+    // export and the wireframe join them back up (facesOf checks each pair really forms a flat, convex quad).
+    out.quads = builder.type !== 'MetaMesh';
     if (comps.hasChannel) out.color2 = this.color2.slice(0, this.nv * 3);
     return out;
   }

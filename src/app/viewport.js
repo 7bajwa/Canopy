@@ -1,5 +1,6 @@
 // The 3D view: a transparent WebGL layer drawn over the node graph. It renders only when something changes.
 import * as THREE from 'three';
+import { facesOf } from './quads.js';
 import { doc } from './doc.js';
 import { ShaderChunk } from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
@@ -251,14 +252,32 @@ export class Viewport {
     this.invalidate();
   }
 
+  // The wireframe shows the faces export writes: quads where triangle pairs join (facesOf), so no diagonals.
   updateWire() {
-    for (const m of this.meshes) for (const ch of [...m.children]) if (ch.userData.wire) m.remove(ch);
+    for (const m of this.meshes) for (const ch of [...m.children]) if (ch.userData.wire) { ch.geometry.dispose(); m.remove(ch); }
     if (!this.wireframe) return;
-    this.wireMat ||= new THREE.MeshBasicMaterial({ wireframe: true, transparent: true, depthWrite: false, toneMapped: false });
+    this.wireMat ||= new THREE.LineBasicMaterial({ transparent: true, depthWrite: false, toneMapped: false });
     this.wireMat.color.set(this.wireLook?.color || '#000000');
     this.wireMat.opacity = this.wireLook?.opacity ?? 0.35;
     for (const m of this.meshes) {
-      const w = new THREE.Mesh(m.geometry, this.wireMat);
+      const src = m.geometry.index; const pos = m.geometry.getAttribute('position');
+      if (!src || !pos) continue;
+      const q = m.userData.src?.quads;
+      const { corners, sizes } = facesOf(src.array, q ? new Uint8Array(src.count / 3).fill(1) : null, pos.array);
+      const seen = new Set(); const edges = [];
+      let at = 0;
+      for (const n of sizes) {
+        for (let i = 0; i < n; i++) {
+          const a = corners[at + i]; const b = corners[at + ((i + 1) % n)];
+          const k = a < b ? a * 4194304 + b : b * 4194304 + a;
+          if (!seen.has(k)) { seen.add(k); edges.push(a, b); }
+        }
+        at += n;
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', pos);
+      g.setIndex(edges);
+      const w = new THREE.LineSegments(g, this.wireMat);
       w.userData.wire = true; w.renderOrder = 2;
       m.add(w);
     }
@@ -839,7 +858,7 @@ export class Viewport {
       const d2 = qx * qx + qy * qy;
       if (d2 < bestScore) {
         bestScore = d2;
-        best = { nodeId: nodeIds[owner[i]], lineId: lineId[i], seg: i, t, point: [P[i * 3] + (P[i * 3 + 3] - P[i * 3]) * t, P[i * 3 + 1] + (P[i * 3 + 4] - P[i * 3 + 1]) * t, P[i * 3 + 2] + (P[i * 3 + 5] - P[i * 3 + 2]) * t] };
+        best = { nodeId: nodeIds[owner[i]], lineId: lineId[i], inst: res.lines.inst?.[i] || 0, seg: i, t, point: [P[i * 3] + (P[i * 3 + 3] - P[i * 3]) * t, P[i * 3 + 1] + (P[i * 3 + 4] - P[i * 3 + 1]) * t, P[i * 3 + 2] + (P[i * 3 + 5] - P[i * 3 + 2]) * t] };
       }
     }
     return best;
@@ -865,26 +884,43 @@ export class Viewport {
     this.invalidate();
   }
 
-  // A picture of the whole plant on a transparent background, independent of the window and the panels.
+  // A picture of the plant, independent of the window and the panels. Size is a number (square) or width/height in
+  // opts. opts.view keeps the current camera instead of framing the whole plant; opts.grid false drops the floor grid;
+  // opts.hide lists extra helpers to leave out; opts.filter(imageData) post-processes the pixels.
   renderImage(size = 2048, opts = {}) {
-    const keep = { rect: this.rect, bias: this.bias, biasY: this.biasY, sel: doc.sel, target: this.orbit.target.clone(), dist: this.orbit.dist, ground: this.ground.visible, floor: this.floor.visible, clear: this.renderer.getClearColor(new THREE.Color()), alpha: this.renderer.getClearAlpha() };
+    const W = Math.round(opts.width || size); const H = Math.round(opts.height || size);
+    const keep = { rect: this.rect, bias: this.bias, biasY: this.biasY, sel: doc.sel, target: this.orbit.target.clone(), dist: this.orbit.dist, ground: this.ground.visible, floor: this.floor.visible, clear: this.renderer.getClearColor(new THREE.Color()), alpha: this.renderer.getClearAlpha(), map: this.floor.material.map, preview: this.preview.visible };
+    const hidden = [...this.helpers, ...(opts.hide || [])].filter((o) => o?.visible);
+    for (const o of hidden) o.visible = false;
+    this.preview.visible = false;
     this.scale.group.visible = false;
     if (opts.figure) this.scale.update(this.box, opts.figure, this.units);
     if (opts.ground === false) { this.ground.visible = false; this.floor.visible = false; }
+    if (opts.grid === false && this.floor.visible) { const g = this.groundLook || {}; this.floor.material.map = groundTexture(g.color || '#3a4a30', this.floor.scale.x, false); this.floor.material.needsUpdate = true; }
     if (opts.bg) this.renderer.setClearColor(opts.bg, 1);
     doc.sel = new Set();
     this.highlight();
     this.anim = null;
-    this.rect = { x: 0, y: 0, w: size, h: size };
+    this.rect = { x: 0, y: 0, w: W, h: H };
     this.bias = 0; this.biasY = 0;
     this.renderer.setPixelRatio(1);
-    this.renderer.setSize(size, size, false);
+    this.renderer.setSize(W, H, false);
     this.applyCamera();
-    this.frameAll(true);
+    if (!opts.view) this.frameAll(true);
     if (opts.figure) this.scale.place(this.camera);
     this.renderer.render(this.scene, this.camera);
     // Read back in the same task, before the browser clears the canvas.
-    const url = this.canvas.toDataURL('image/png');
+    let url;
+    if (opts.filter) {
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const g = c.getContext('2d'); g.drawImage(this.canvas, 0, 0);
+      const img = opts.filter(g.getImageData(0, 0, W, H));
+      g.putImageData(new ImageData(img.data instanceof Uint8ClampedArray ? img.data : new Uint8ClampedArray(img.data), W, H), 0, 0);
+      url = c.toDataURL('image/png');
+    } else url = this.canvas.toDataURL('image/png');
+    for (const o of hidden) o.visible = true;
+    this.preview.visible = keep.preview;
+    if (this.floor.material.map !== keep.map) { this.floor.material.map.dispose(); this.floor.material.map = keep.map; this.floor.material.needsUpdate = true; }
     this.ground.visible = keep.ground; this.floor.visible = keep.floor;
     this.renderer.setClearColor(keep.clear, keep.alpha);
     doc.sel = keep.sel;

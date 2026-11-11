@@ -1,9 +1,10 @@
 {
   "name": "canopy-tree-editor",
   "private": true,
-  "version": "0.42.0",
+  "version": "0.43.0",
   "type": "module",
   "scripts": {
+    "dev": "vite",
     "build": "node scripts/make-docs.mjs && node scripts/make-samples.mjs && vite build",
     "test": "node --test",
     "serve:lan": "vite preview --host --port 4173",

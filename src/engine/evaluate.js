@@ -342,7 +342,7 @@ export class Evaluator {
       attach: null, roll: null, startDir: spawn.d, upHint: spawn.up || null, lastLevel: true,
       rootDist: spawn.parent ? spawn.parent.rootDist + (spawn.s || 0) : 0,
       chainPos: spawn.parent ? (spawn.parent.rootDist + (spawn.s || 0)) / Math.max(1e-3, spawn.parent.rootDist + spawn.parent.length) : 0,
-      colorFn: null, radii: null, capEnd: null, capStart: null, dead: false, windW: 0, sizeScale: spawn.scale ?? 1, xf: spawn.xf || null,
+      colorFn: null, radii: null, capEnd: null, capStart: null, dead: false, windW: 0, sizeScale: spawn.scale ?? 1, xf: spawn.xf || null, inst: spawn.key || 0,
     };
     finishLine(line);
     return line;
@@ -678,6 +678,8 @@ export class Evaluator {
     const nodeIndex = new Map();
     const owner = new Uint16Array(count * 2);
     const radius = new Float32Array(count * 2);
+    // The placement copy each line came from (0 for none), so the Transform gizmo can edit one copy.
+    const inst = new Int32Array(count * 2);
     let k = 0;
     const rgb = new Map();
     const parse = (hex) => {
@@ -695,13 +697,13 @@ export class Evaluator {
           const v = (i + e) * 3;
           position[k * 3] = l.pts[v]; position[k * 3 + 1] = l.pts[v + 1]; position[k * 3 + 2] = l.pts[v + 2];
           color[k * 3] = c[0]; color[k * 3 + 1] = c[1]; color[k * 3 + 2] = c[2];
-          lineId[k] = l.id; owner[k] = ni;
+          lineId[k] = l.id; owner[k] = ni; inst[k] = l.inst || 0;
           radius[k] = l.radii ? l.radii[Math.min(i + e, l.radii.length - 1)] : 0;
           k++;
         }
       }
     }
-    return { position, color, lineId, owner, radius, nodeIds };
+    return { position, color, lineId, owner, radius, nodeIds, inst };
   }
 }
 

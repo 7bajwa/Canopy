@@ -397,6 +397,7 @@ export function attachInput(stage, graph, view, ui) {
       case 'orbit-or-tap':
         if (!g.moved) {
           const hit = view.pick(p.x, p.y);
+          ui.gizmo?.picked(hit);
           if (hit) { select([hit.nodeId], e.shiftKey ? 'add' : 'set'); graph.invalidate(); } else if (!e.shiftKey) select([]);
         }
         break;
@@ -461,7 +462,7 @@ export function attachInput(stage, graph, view, ui) {
       if (d.pts.length < 2) return;
       const stroke = { pts: d.pts, ...(d.anchor || {}) };
       if (d.node && doc.graph.nodes.includes(d.node)) setRowValue(d.node, d.node.params, 'strokes', [...d.node.params.strokes, stroke]);
-      else d.node = ui.drawnSpline(d.parentId, stroke);
+      else d.node = ui.drawnSpline(d.parentId, stroke, d.styleId);
       changed({ layout: true }); commit();
       return;
     }
@@ -536,7 +537,7 @@ export function attachInput(stage, graph, view, ui) {
   }
 
   // The Draw tool: strokes in the 3D view become a Spline under the picked node (or on its own).
-  function startPen(parentId) { state.draw = { pen: true, parentId, node: null, pts: [] }; stage.classList.add('drawing'); ui.toast('Draw in the 3D view. Press Esc or the Draw button again when you are done.', 3500); }
+  function startPen(parentId, styleId = null) { state.draw = { pen: true, parentId, styleId, node: null, pts: [] }; stage.classList.add('drawing'); if (!styleId) ui.toast('Draw in the 3D view. Press Esc or the Draw button again when you are done.', 3500); }
   function startDraw(node) { state.draw = { node, pts: [] }; stage.classList.add('drawing'); ui.toast('Draw in the 3D view. Press Esc when you are done.', 3000); }
   function stopDraw() { state.draw = null; stage.classList.remove('drawing'); view.showPreview([]); ui.onDrawStop?.(); }
 

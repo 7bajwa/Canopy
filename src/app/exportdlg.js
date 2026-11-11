@@ -6,7 +6,7 @@ import { doc } from './doc.js';
 import { facesOf } from './quads.js';
 import { writeFbx } from './fbx.js';
 import { zipStore } from './zip.js';
-import { download, safeName } from './io.js';
+import { download, safeName, saveDocument } from './io.js';
 import { lineOf, lineExtents, windColors, pivotElements, pivotTextures, pivotUvs, bakeVat, piecesOf, pick } from './exportkit.js';
 import { WIND_STRIDE } from '../engine/wind.js';
 
@@ -28,9 +28,10 @@ export function openExport(view, toast, batch = null) {
     body.replaceChildren();
     const sec = (t, on = true) => { const d = el('details', 'set-sec'); d.open = on; d.append(el('summary', '', t)); body.append(d); return d; };
     const f = sec('File');
-    f.append(selectField('Format', opts.format, [['glb', 'GLB (glTF binary)'], ['fbx', 'FBX'], ['obj', 'OBJ, in a zip']], (v) => { opts.format = v; draw(); }));
+    f.append(selectField('Format', opts.format, [['glb', 'GLB (glTF binary)'], ['fbx', 'FBX'], ['obj', 'OBJ, in a zip'], ['canopy', 'Canopy plant (.canopy)']], (v) => { opts.format = v; draw(); }));
     if (opts.format !== 'obj') f.append(checkField('Pack textures inside the file', opts.pack, (v) => { opts.pack = v; }));
-    f.append(el('p', 'hint', opts.format === 'obj' ? 'The OBJ, its MTL and the pictures come in one zip.' : 'Off puts the pictures beside the file, in a zip.'));
+    f.append(el('p', 'hint', opts.format === 'obj' ? 'The OBJ, its MTL and the pictures come in one zip.' : opts.format === 'canopy' ? 'The editable plant, nodes and all. Off: a zip with the .canopy and a textures folder.' : 'Off puts the pictures beside the file, in a zip.'));
+    if (opts.format === 'canopy') return;
     if (batch) {
       const b = sec(`Presets (${batch.items.length})`);
       b.append(selectField('Presets as', opts.batch, [['separate', 'A file for each'], ['one', 'One file, side by side']], (v) => { opts.batch = v; }));
@@ -242,6 +243,7 @@ async function sendToBlender(view) {
 }
 
 async function runExport(view, title = doc.name) {
+  if (opts.format === 'canopy') { saveDocument(opts.pack ? 'embed' : 'folder'); return; }
   const { parts, table, pp } = partsOf(view);
   const name = safeName(title);
   const extra = [];

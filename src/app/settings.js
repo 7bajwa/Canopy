@@ -170,8 +170,11 @@ export function openSettings(root, prefs, setPref) {
     }
   } else if (tab === 'render') {
     head('Picture');
-    num('Size', 'renderSize', { min: 64, max: 8192, int: true, unit: 'px' });
-    note('Square pictures this many pixels across; 1024, 2048 and 4096 are the usual sizes.');
+    num('Width', 'renderSize', { min: 16, max: 8192, int: true, unit: 'px' });
+    num('Height', 'renderHeight', { min: 16, max: 8192, int: true, unit: 'px' });
+    note('Camera, filters and a live preview are in Render settings, beside the render button. Variations draw their thumbnails from the current view with the same filters, and never with the ground grid.');
+    pick('Camera', 'renderCamera', [['frame', 'Frame the whole plant'], ['view', 'The current view']]);
+    check('Include the ground grid', 'renderGrid');
     check('Include the scale figure', 'renderFigure');
     check('Include the ground shadow', 'renderGround');
     pick('Background', 'renderBg', [['clear', 'See-through (PNG)'], ['color', 'A color']]);
@@ -196,6 +199,9 @@ export function openSettings(root, prefs, setPref) {
     check('Catch shadows', 'groundShadow');
     check('Faint grid on the ground', 'groundGrid');
   } else if (tab === 'system') {
+    head('Saving');
+    pick('Textures', 'texturesInFile', [['embed', 'Packed inside the .canopy file'], ['folder', 'Beside it: a .zip with a textures folder']]);
+    note('Packed: one file carries the plant and every picture, nothing to keep track of. Beside it: the pictures stay ordinary files you can open and edit; open the .zip in Canopy to get it all back.');
     head('Backups');
     check('Keep backups while I work', 'backupOn');
     num('Save a backup every', 'backupMin', { min: 0.5, max: 120, unit: 'min' });

@@ -399,13 +399,29 @@ export function avoidMesh(m, meshes, P) {
   const keyOf = (x, y, z) => (cell(x) * 73856093) ^ (cell(y) * 19349663) ^ (cell(z) * 83492791);
   const grid = new Map();
   const put = (x, y, z, tag) => { const k = keyOf(x, y, z); let c = grid.get(k); if (!c) grid.set(k, (c = [])); c.push(x, y, z, tag); };
+  // Points over a mesh's surface, not just its corners: big triangles (cards, flat leaves, coarse tubes) get extra
+  // points across them every half reach, so nothing slips through between far-apart vertices.
+  const putSurface = (o, parts, tag) => {
+    const V = o.position; const I = o.index; const step = R * 0.5;
+    for (let v = 0; v < V.length / 3; v++) if (parts.along[v] >= skip) put(V[v * 3], V[v * 3 + 1], V[v * 3 + 2], tag(v));
+    if (!I) return;
+    for (let t = 0; t < I.length; t += 3) {
+      const a = I[t]; const b = I[t + 1]; const c = I[t + 2];
+      if (parts.along[a] < skip && parts.along[b] < skip && parts.along[c] < skip) continue;
+      const e = Math.max(Math.hypot(V[a * 3] - V[b * 3], V[a * 3 + 1] - V[b * 3 + 1], V[a * 3 + 2] - V[b * 3 + 2]), Math.hypot(V[a * 3] - V[c * 3], V[a * 3 + 1] - V[c * 3 + 1], V[a * 3 + 2] - V[c * 3 + 2]));
+      const n = Math.min(24, Math.ceil(e / step));
+      if (n < 2) continue;
+      const g = tag(a);
+      for (let i = 0; i <= n; i++) for (let j = 0; i + j <= n; j++) {
+        if ((i === 0 && j === 0) || (i === n) || (j === n)) continue;
+        const u = i / n; const w = j / n; const k = 1 - u - w;
+        put(V[a * 3] * k + V[b * 3] * u + V[c * 3] * w, V[a * 3 + 1] * k + V[b * 3 + 1] * u + V[c * 3 + 1] * w, V[a * 3 + 2] * k + V[b * 3 + 2] * u + V[c * 3 + 2] * w, g);
+      }
+    }
+  };
   // Other meshes go in whole, tagged below zero; this mesh's parts by their own number.
   if (P.with !== 'same node') {
-    meshes.forEach((o, mi) => {
-      if (o === m) return;
-      const parts = partsOf(o); const V = o.position;
-      for (let v = 0; v < V.length / 3; v++) if (parts.along[v] >= skip) put(V[v * 3], V[v * 3 + 1], V[v * 3 + 2], -1 - mi);
-    });
+    meshes.forEach((o, mi) => { if (o !== m) putSurface(o, partsOf(o), () => -1 - mi); });
   }
   const mine = P.with !== 'other nodes';
   const V = m.position; const N = m.normal; const nv = V.length / 3;
@@ -438,7 +454,7 @@ export function avoidMesh(m, meshes, P) {
     m.index = new Uint32Array(keep);
     return dropped.reduce((a, b) => a + b, 0);
   }
-  if (mine) for (let v = 0; v < nv; v++) if (own.along[v] >= skip) put(V[v * 3], V[v * 3 + 1], V[v * 3 + 2], own.id[v]);
+  if (mine) putSurface(m, own, (v) => own.id[v]);
   const amount = Math.max(0, +(P.amount ?? 2));
   const move = new Float32Array(nv);
   let moved = 0;
@@ -449,7 +465,8 @@ export function avoidMesh(m, meshes, P) {
     const w = h[3] <= D ? 1 : F > 0 ? 1 - (h[3] - D) / F : 0;
     if (w <= 0) continue;
     const away = (V[v * 3] - h[0]) * N[v * 3] + (V[v * 3 + 1] - h[1]) * N[v * 3 + 1] + (V[v * 3 + 2] - h[2]) * N[v * 3 + 2];
-    move[v] = (away >= 0 ? 1 : -1) * amount * w; moved++;
+    // At least out to the clearance when inside it, so a touching point really comes clear.
+    move[v] = (away >= 0 ? 1 : -1) * Math.max(amount * w, h[3] < D ? D - h[3] : 0); moved++;
   }
   for (let v = 0; v < nv; v++) if (move[v]) for (let s = 0; s < 3; s++) V[v * 3 + s] += N[v * 3 + s] * move[v];
   if (moved) freshNormals(m);

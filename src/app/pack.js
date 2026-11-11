@@ -203,6 +203,12 @@ export class TexturePacker {
       layout.push(el('h4', 'section', c?.name || 'Piece'),
         numberField('Rotation', Math.round((it.rot * 180) / Math.PI), { unit: '°' }, (v) => { it.rot = (v * Math.PI) / 180; this.draw(); }),
         numberField('Scale %', Math.round(it.k * 1e5) / 1e3, { min: 0.001 }, (v) => { it.k = v / 100; this.draw(); }));
+      if (this.deps.editShape) {
+        const ed = el('button', 'wide', 'Edit vertices in 3D');
+        ed.title = 'Reshape this cutout point by point in 3D, to make it unique; Preserve UVs decides whether the texture stretches with it';
+        ed.addEventListener('click', () => { this.close(); this.deps.editShape(it.mat, it.cut); });
+        layout.push(ed);
+      }
     }
     b.append(fold('Materials', mats), fold('Layout', layout), ...exportFields(s.settings, { only: ['color', 'normal', 'roughness', 'ao', 'subsurface'] }));
     this.root.querySelector('[data-pack]').disabled = !s.items.length;

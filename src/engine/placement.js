@@ -14,6 +14,10 @@ function emitter(ev, dn, q, out) {
   const align = clamp(+(dn.params.alignParent ?? 100) / 100, 0, 1);
   const identity = !!dn.params.identity;
   const localXf = dn.params.xfSpace !== 'world';
+  // Per-copy edits from the Transform gizmo, keyed by the copy's key: t a move (world), q a turn (world quaternion
+  // about the copy's base), s a scale on the copy's own axes.
+  // shortcut: keys follow the parent line ids, so a copy's edit can move to another copy when the parents' counts change; store a stable path if that bites.
+  const inst = dn.params.inst || null;
   // `mirror` is the second side of a pair (or every other one): its turns run the other way, so pairs open
   // and close like wings, and its transform is reflected across the plane through the parent line.
   return function emit({ p, axis, radial, t, key, line = null, s = 0, tilt = null, sizeK = 1, mirror = false, spinAdd = 0, rollAdd = 0 }) {
@@ -46,18 +50,29 @@ function emitter(ev, dn, q, out) {
     // Roll turns it on its own axis, the way it heads.
     const roll = ((q.roll?.(c) || 0) + rollAdd) * DEG;
     if (roll) { uP = rotate(uP, dP, roll); xP = rotate(xP, dP, roll); }
+    const ov = inst?.[key];
+    if (ov?.q) { dP = norm(rotQ(dP, ov.q)); uP = norm(rotQ(uP, ov.q)); xP = rotQ(xP, ov.q); }
+    if (ov?.s) for (let i = 0; i < 3; i++) axes[i] *= ov.s[i];
     const F = localXf ? ownFrame(dP, xP) : ZUP;
     const o = [q.posX?.(c) || 0, q.posY?.(c) || 0, q.posZ?.(c) || 0];
     const off = M([0, 1, 2].map((i) => F[0][i] * o[0] + F[1][i] * o[1] + F[2][i] * o[2]));
     const pos = [p[0] + off[0], p[1] + off[1], p[2] + off[2]];
+    if (ov?.t) for (let i = 0; i < 3; i++) pos[i] += ov.t[i];
     const scale = Math.max(0, (q.scale(c) / 100) * u) * sizeK;
     out.push({
       p: pos, d: M(dP), up: M(uP), parent: line, s, pos: t, level: c.level, lengthScale: scale, scale,
       xf: identity ? shapeXf(rot, axes) : null,
       axisScale: !identity && axes.some((a) => a !== 1) ? { k: axes, f: F.map(M) } : null,
-      angleDiv: a / DEG, angleBend: 0, offset: 0, distance: 0,
+      angleDiv: a / DEG, angleBend: 0, offset: 0, distance: 0, key,
     });
   };
+}
+
+// v turned by the unit quaternion q = [x, y, z, w].
+function rotQ(v, q) {
+  const [x, y, z, w] = q;
+  const tx = 2 * (y * v[2] - z * v[1]); const ty = 2 * (z * v[0] - x * v[2]); const tz = 2 * (x * v[1] - y * v[0]);
+  return [v[0] + w * tx + y * tz - z * ty, v[1] + w * ty + z * tx - x * tz, v[2] + w * tz + x * ty - y * tx];
 }
 
 // Where the local modes start: the origin, or the tip of each parent line.

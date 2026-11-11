@@ -3,7 +3,7 @@ import '@fontsource/poppins/latin-400.css';
 import '@fontsource/poppins/latin-500.css';
 import '@fontsource/poppins/latin-600.css';
 import './style.css';
-import { doc, on, loadGraph, resetHistory, regenerate, commit, undo, redo, setAutosaver, groupSelected, changed, addNode, connect, select, selected, primary, mergeNodes, hasEdits, removeNodes, duplicate, emit, setHistoryLimit } from './app/doc.js';
+import { doc, on, loadGraph, resetHistory, regenerate, commit, undo, redo, setAutosaver, groupSelected, changed, addNode, connect, select, selected, primary, mergeNodes, hasEdits, removeNodes, duplicate, emit, setHistoryLimit, nodeById } from './app/doc.js';
 import { NODE_TYPES, socketsOf, kindFits, clone, defaultParams } from './graph/schema.js';
 import { makeApi, startBridge, stopBridge } from './app/aibridge.js';
 import { PRESETS, DEFAULT_PRESET } from './graph/presets.js';
@@ -22,10 +22,12 @@ import { materialOf, newMaterial } from './graph/materials.js';
 import { openSettings } from './app/settings.js';
 import { openExport } from './app/exportdlg.js';
 import { makeSeedPresets } from './app/seedpresets.js';
+import { makeRender } from './app/renderui.js';
+import { makeScanBake } from './app/scanbake.js';
 import { applyTheme, themeOf } from './app/themes.js';
 import { WIND_PRESETS } from './graph/defs-unified.js';
 import { dockAt } from './app/dock.js';
-import { saveDocument, saveNodes, parseDocument, pickFile, readDataUrl, importMesh, downloadImage, autosave, loadAutosave, documentText, downloadText, safeName, storeBackup } from './app/io.js';
+import { saveDocument, readDocumentFile, saveNodes, parseDocument, pickFile, readDataUrl, importMesh, downloadImage, autosave, loadAutosave, documentText, downloadText, safeName, storeBackup } from './app/io.js';
 import { makeBackups } from './app/backup.js';
 import { setUnits } from './app/units.js';
 
@@ -40,9 +42,11 @@ function storedPrefs() {
 }
 const prefs = { shadows: view.renderer.shadowMap.enabled, snap: false, graphDim: 1, layout: 'overlay', ui: 1, text: 1, varShow: 'icon', fadeOn: true, fadeStrength: 0.85, fadeSize: 1.25, exposure: 1, envLight: 0.55, navAt: 'middle', units: 'metric', windMin: 0, windMax: 10, gustFreq: 6, windSpeed: 1, windDir: 20, scaleShow: 'both', backupMin: 5, undoSteps: 80, shading: 'pbr', theme: 'forest', grid: true, gizmo: true,
   focus: 'auto', splitAt: 0.5, toolGroups: {}, wireColor: '#000000', wireOpacity: 0.35, dials: true, dialSize: 48, gizmoSize: 96, sunYaw: 38, navY2d: null, navY3d: null,
-  renderSize: 2048, glow: false, renderFigure: false, renderGround: true, renderBg: 'clear', renderBgColor: '#11160f', backupOn: true, aiBridge: false,
+  texturesInFile: 'embed', renderSize: 2048, renderHeight: null, renderCamera: 'frame', renderGrid: false, renderPost: {}, glow: false, renderFigure: false, renderGround: true, renderBg: 'clear', renderBgColor: '#11160f', backupOn: true, aiBridge: false,
   groundOn: true, groundColor: '#3a4a30', groundOpacity: 0.35, groundSize: 200, groundGrid: true, groundShadow: true, swapViews: false, barAt: 'top', navWall2d: null, navWall3d: null, customThemes: {}, ...storedPrefs() };
 const savePrefs = () => localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+// Pictures were square before height had its own setting.
+prefs.renderHeight ??= prefs.renderSize;
 // Once, for this version: the new starting look (no graph grid, snapping on, no glow, a folded toolbar, a smaller ground).
 if (!prefs.seen39) Object.assign(prefs, { grid: false, snap: true, glow: false, toolGroups: {}, groundSize: 200, seen39: true });
 
@@ -334,9 +338,13 @@ function graphRegion() {
     const h = (prefs.layout === 'split' ? r.height * (1 - prefs.splitAt) : r.height) - top - 56;
     return { x: NAV_W, y: top, w: free - NAV_W, h };
   }
-  if (prefs.layout === 'overlay' && free > 700) return swap ? { x: free * 0.5, y: 0, w: free * 0.5 - NAV_W, h: r.height } : { x: NAV_W, y: 0, w: free * 0.5 - NAV_W, h: r.height };
-  if (prefs.layout === 'split') return swap ? { x: free * (1 - prefs.splitAt), y: 0, w: free * prefs.splitAt - NAV_W, h: r.height } : { x: NAV_W, y: 0, w: free * prefs.splitAt - NAV_W, h: r.height };
-  return { x: NAV_W, y: 0, w: free - NAV_W, h: r.height };
+  // A top bar floating over the stage covers its first rows, so the graph starts below it.
+  const bar = $('#bar').getBoundingClientRect();
+  const top = prefs.barAt === 'top' || !prefs.barAt ? Math.max(0, bar.bottom - r.top) : 0;
+  const h = r.height - top;
+  if (prefs.layout === 'overlay' && free > 700) return swap ? { x: free * 0.5, y: top, w: free * 0.5 - NAV_W, h } : { x: NAV_W, y: top, w: free * 0.5 - NAV_W, h };
+  if (prefs.layout === 'split') return swap ? { x: free * (1 - prefs.splitAt), y: top, w: free * prefs.splitAt - NAV_W, h } : { x: NAV_W, y: top, w: free * prefs.splitAt - NAV_W, h };
+  return { x: NAV_W, y: top, w: free - NAV_W, h };
 }
 
 function setLayout(mode) {
@@ -348,17 +356,30 @@ function setLayout(mode) {
 
 // ---- Parts ----
 const xfGizmo = new XfGizmo(view);
+const scanBake = makeScanBake({ view, toast: (m, ms) => toast(m, ms) });
+const renderer = makeRender({ view, prefs, setPref: (k, v) => setPref(k, v), toast: (m) => toast(m), download: (u) => downloadImage(u), hide: () => [xfGizmo.helper] });
 const ui = {
   gizmo: xfGizmo,
   // The Draw tool's first stroke: a new Spline under the node it was drawn on (or on its own), drawn as a thin tube.
-  drawnSpline(parentId, stroke) {
+  // A drawn spline. With a picked node as the style, it is a sibling of that node: same mesh, materials, modifiers
+  // and look, growing from the same parent, and every child of the picked node grows on it too (children take
+  // several parents). Without one it is a plain spline under parentId.
+  drawnSpline(parentId, stroke, styleId = null) {
     const parent = parentId && doc.graph.nodes.find((x) => x.id === parentId);
-    const n = newNode('Spline', (parent?.x ?? 0) + NODE_W + 110, (parent?.y ?? 0) + 70);
-    Object.assign(n.params, { strokes: [stroke], radius: parent ? Math.max(0.5, (+parent.params.radius || 4) * 0.4) : 4, blendOffset: parent ? 0.5 : 0 });
-    // The bark of what it grows on (a tube's own material when that has leaves too).
-    if (parent?.type === 'Spline') n.params.material = parent.params.tubeMaterial || parent.params.material;
-    n.name = 'Drawn';
+    const style = styleId && doc.graph.nodes.find((x) => x.id === styleId && x.type === 'Spline');
+    const n = newNode('Spline', (style?.x ?? parent?.x ?? 0) + (style ? 30 : NODE_W + 110), (style?.y ?? parent?.y ?? 0) + 70);
+    if (style) {
+      const { strokes, inst, ...look } = structuredClone(style.params);
+      Object.assign(n.params, look, { strokes: [stroke] });
+      n.name = `${style.name} (drawn)`;
+    } else {
+      Object.assign(n.params, { strokes: [stroke], radius: parent ? Math.max(0.5, (+parent.params.radius || 4) * 0.4) : 4, blendOffset: parent ? 0.5 : 0 });
+      // The bark of what it grows on (a tube's own material when that has leaves too).
+      if (parent?.type === 'Spline') n.params.material = parent.params.tubeMaterial || parent.params.material;
+      n.name = 'Drawn';
+    }
     if (parent) connect(parent.id, 'children', n.id, 'parent');
+    if (style) for (const l of doc.graph.links.filter((x) => x.from === style.id && x.fromSock === 'children')) connect(n.id, 'children', l.to, l.toSock);
     settleNew(n);
     return n;
   },
@@ -379,16 +400,18 @@ const ui = {
   },
   openMaterials: (id) => matEditor.open(id),
   modalOpen: () => atlas.isOpen() || !settingsEl.hidden || matEditor.isOpen() || packer.isOpen(),
-  save: () => saveDocument(),
+  save: () => saveDocument(prefs.texturesInFile),
   cycleLayout: () => setLayout(LAYOUTS[(LAYOUTS.indexOf(prefs.layout) + 1) % LAYOUTS.length]),
   setMode,
 };
 
 const input = attachInput(stage, graph, view, ui);
+for (const b of document.querySelectorAll('[data-xf-scope]')) b.addEventListener('click', () => { xfGizmo.setScope(b.dataset.xfScope); for (const o of document.querySelectorAll('[data-xf-scope]')) o.setAttribute('aria-pressed', o === b); });
+document.querySelector('[data-xf-reset]')?.addEventListener('click', () => { if (!xfGizmo.resetCopy()) toast('Click a copy in the 3D view first; it has no edit of its own yet.'); });
 for (const b of document.querySelectorAll('[data-xf]')) b.addEventListener('click', () => { xfGizmo.setMode(b.dataset.xf); for (const o of document.querySelectorAll('[data-xf]')) o.setAttribute('aria-pressed', o === b); });
 // For touch screens, where there is no Delete key.
 $('[data-xf-remove]').addEventListener('click', () => input.removeSelection());
-const seedPresets = makeSeedPresets({ view, toast, exportBatch: (items, each) => openExport(view, toast, { items, each }) });
+const seedPresets = makeSeedPresets({ view, toast, thumb: () => renderer.image({ thumb: true }), exportBatch: (items, each) => openExport(view, toast, { items, each }) });
 // Color boxes everywhere open the app's own color popup beside them.
 takeOverColorInputs();
 const canopy = { doc, graph, view, xf: xfGizmo, rebuild: () => changed({ layout: true }) }; // lets automated checks and the console read and rebuild the editor's state
@@ -418,7 +441,10 @@ bake = new BakePanel($('#bake'), $('#bake-frame'), {
   enter: (on) => { view.setOrtho(on); stage.toggleAttribute('data-bake', on); layout(); },
 });
 view.onCamera = () => { gizmo.draw(); bake.viewMoved(); };
-const packer = new TexturePacker($('#packer'), { toast });
+const packer = new TexturePacker($('#packer'), {
+  toast,
+  editShape: (matId, cutId) => { const m = doc.graph.materials?.find((x) => x.id === matId); if (!m) return; matEditor.open(m.id); matEditor.dock(true); atlas.openOn(m, cutId); },
+});
 Object.assign(canopy, { bake, packer });
 
 // ---- Settings ----
@@ -619,7 +645,7 @@ const applyBar = () => { document.body.dataset.bar = barSide(); requestAnimation
 
 // Toolbar groups can be full, folded into one button with a list, or hidden. They start folded, with adding nodes
 // left open and the update and wind buttons out of the way (updates are automatic).
-const GROUP_START = { make: 'full', update: 'hidden', wind: 'hidden' };
+const GROUP_START = { make: 'full', vary: 'full', tools: 'full', update: 'hidden', wind: 'hidden' };
 const groupMode = (k) => prefs.toolGroups?.[k] || GROUP_START[k] || 'compact';
 // Each button can also be left out on its own (Settings, Toolbar). A folded group's button does the last thing
 // picked from it; holding it (or its arrow) opens the list, and what is picked there moves to the top.
@@ -789,6 +815,7 @@ $('#backup [data-save]').addEventListener('click', async () => {
 on('graph', () => graph.invalidate());
 on('selection', () => { graph.invalidate(); view.highlight(); });
 on('result', (res) => {
+  renderer.refresh();
   view.apply(res);
   const s = res.stats;
   $('#stats').textContent = `${s.lines.toLocaleString('en')} lines · ${s.tris.toLocaleString('en')} triangles · ${s.ms} ms${s.draft ? ' · draft' : ''}`;
@@ -895,10 +922,10 @@ async function startFresh() {
 }
 
 async function openFile() {
-  const f = await pickFile('.canopy,application/json');
+  const f = await pickFile('.canopy,.zip,application/json,application/zip');
   if (!f || !okToReplace()) return;
   try {
-    const d = parseDocument(await f.text());
+    const d = await readDocumentFile(f);
     await openGraph(d.graph || { nodes: d.nodes, links: d.links, groups: [], settings: {} }, d.name || f.name.replace(/\.\w+$/, ''), { ...doc.assets, ...d.assets });
   } catch (e) { toast(e.message, 5000); }
 }
@@ -950,7 +977,7 @@ const actions = {
     { label: 'Add nodes from a file…', fn: importNodes },
     { head: 'Samples' }, ...(await sampleItems()),
   ]),
-  save: saveDocument,
+  save: () => saveDocument(prefs.texturesInFile),
   import: importMeshFile,
   backup() {
     if (backups.running()) { backups.stop(); press('backup', false); toast('Backups are off.'); return; }
@@ -980,8 +1007,14 @@ const actions = {
   },
   pen() {
     if (input.state.draw?.pen) { input.stopDraw(); return; }
+    // A picked Spline is the style: the drawing grows from its parent, looking like it. A picked Mesh is a surface
+    // to draw on.
     const n = primary();
-    input.startPen(n && (n.type === 'Spline' || n.type === 'Mesh') ? n.id : null);
+    if (n?.type === 'Spline') {
+      const up = doc.graph.links.find((l) => l.to === n.id && l.toSock === 'parent');
+      input.startPen(up?.from || null, n.id);
+      toast(up ? `Draw from ${nodeById(up.from)?.name || 'the parent'}: the new lines look like ${n.name} and carry its children.` : `Draw anywhere: the new lines look like ${n.name} and carry its children.`, 4000);
+    } else input.startPen(n?.type === 'Mesh' ? n.id : null);
     press('pen', true);
   },
   presets: () => seedPresets.open(),
@@ -998,12 +1031,9 @@ const actions = {
     showUpdateMode();
     commit();
   },
-  async render() {
-    if (!view.meshes.length) { toast('There is no plant to render yet.'); return; }
-    const size = +prefs.renderSize || 2048;
-    await downloadImage(view.renderImage(size, { figure: prefs.renderFigure ? prefs.scaleShow : null, ground: prefs.renderGround, bg: prefs.renderBg === 'color' ? prefs.renderBgColor : null }));
-    toast(`Saved a ${size} × ${size} image${prefs.renderBg === 'color' ? '' : ' with a see-through background'}.`);
-  },
+  render: () => renderer.quick(),
+  renderSettings: () => renderer.open(),
+  scanBake: () => scanBake.open(),
   undo, redo,
   prefs: () => openSettings(settingsEl, prefs, setPref),
   seed() {

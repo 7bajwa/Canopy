@@ -196,6 +196,37 @@ export function makeSpawns(ev, dn, parents, lv) {
   return out;
 }
 
+// A drawn stroke is only the points the pointer reported, often few and uneven. It is turned into a smooth curve
+// through them (Catmull-Rom) and resampled evenly, at least 12 steps and at most 8 cm apart, so a drawn branch
+// gets as many rings as a grown one and bends smoothly. pts (flat xyz) is replaced in place.
+export function smoothStroke(pts) {
+  const n = pts.length / 3;
+  const at = (i) => { const k = Math.max(0, Math.min(n - 1, i)); return [pts[k * 3], pts[k * 3 + 1], pts[k * 3 + 2]]; };
+  const dense = [];
+  for (let i = 0; i + 1 < n; i++) {
+    const p0 = at(i - 1); const p1 = at(i); const p2 = at(i + 1); const p3 = at(i + 2);
+    for (let k = 0; k < 8; k++) {
+      const t = k / 8; const t2 = t * t; const t3 = t2 * t;
+      dense.push([0, 1, 2].map((j) => 0.5 * (2 * p1[j] + (-p0[j] + p2[j]) * t + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * t2 + (-p0[j] + 3 * p1[j] - 3 * p2[j] + p3[j]) * t3)));
+    }
+  }
+  dense.push(at(n - 1));
+  const len = [0];
+  for (let i = 1; i < dense.length; i++) len.push(len[i - 1] + Math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1], dense[i][2] - dense[i - 1][2]));
+  const L = len.at(-1);
+  if (!(L > 0)) return pts;
+  const steps = Math.max(12, Math.min(256, Math.ceil(L / 8)));
+  pts.length = 0;
+  let j = 0;
+  for (let k = 0; k <= steps; k++) {
+    const s = (k / steps) * L;
+    while (j + 1 < len.length - 1 && len[j + 1] < s) j++;
+    const f = (s - len[j]) / ((len[j + 1] - len[j]) || 1);
+    for (let c = 0; c < 3; c++) pts.push(dense[j][c] + (dense[j + 1][c] - dense[j][c]) * Math.min(1, Math.max(0, f)));
+  }
+  return pts;
+}
+
 // Hand-drawn strokes become lines. A stroke keeps its shape and follows its parent's position.
 export function drawnLines(ev, node, parents) {
   const P = node.params;
@@ -227,6 +258,7 @@ export function drawnLines(ev, node, parents) {
       pts.push(p[0], p[1], p[2]);
     }
     if (pts.length < 6) continue;
+    smoothStroke(pts);
     const d = norm([pts[3] - pts[0], pts[4] - pts[1], pts[5] - pts[2]]);
     const sp = { p: pts.slice(0, 3), d, parent, s, pos: parent ? s / parent.length : 0, level: parent ? parent.level + 1 : 0 };
     const line = ev.newLine(node, sp, new Float32Array(pts), 0);

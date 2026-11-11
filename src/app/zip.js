@@ -38,3 +38,33 @@ export function zipStore(files) {
   for (const p of [...local, ...central, end]) { out.set(p, at); at += p.length; }
   return out;
 }
+
+// Reads a zip: stored files, and deflated ones (as most zip tools write them) through the browser's own
+// DecompressionStream. Returns [{ name, data: Uint8Array }]. The file comes from outside, so sizes are checked.
+export async function unzip(bytes) {
+  const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  let end = -1;
+  for (let i = b.length - 22; i >= Math.max(0, b.length - 65557); i--) if (v.getUint32(i, true) === 0x06054b50) { end = i; break; }
+  if (end < 0) throw new Error('That is not a zip file.');
+  const count = v.getUint16(end + 10, true); let at = v.getUint32(end + 16, true);
+  const dec = new TextDecoder(); const out = [];
+  for (let n = 0; n < count; n++) {
+    if (at + 46 > b.length || v.getUint32(at, true) !== 0x02014b50) throw new Error('That zip file is damaged.');
+    const method = v.getUint16(at + 10, true); const size = v.getUint32(at + 20, true);
+    const nameLen = v.getUint16(at + 28, true); const extra = v.getUint16(at + 30, true); const note = v.getUint16(at + 32, true);
+    const local = v.getUint32(at + 42, true);
+    const name = dec.decode(b.subarray(at + 46, at + 46 + nameLen));
+    at += 46 + nameLen + extra + note;
+    if (name.endsWith('/')) continue;
+    const start = local + 30 + v.getUint16(local + 26, true) + v.getUint16(local + 28, true);
+    if (start + size > b.length) throw new Error('That zip file is damaged.');
+    const raw = b.subarray(start, start + size);
+    let data;
+    if (method === 0) data = raw.slice();
+    else if (method === 8) data = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+    else throw new Error(`${name} uses a zip compression Canopy can't read.`);
+    out.push({ name, data });
+  }
+  return out;
+}

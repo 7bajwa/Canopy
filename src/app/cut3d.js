@@ -1,8 +1,9 @@
 // Edits a cutout's shape in 3D. Left-drag on empty space picks points in a box (Shift adds), a click picks one,
 // dragging a picked point moves every picked one; right-drag pans, middle-drag revolves, the wheel zooms, and the
 // icons under the gizmo do the same. Straighten lines the picked points up on one axis, Gridify pulls them into
-// the rows and columns they nearly form, Snap puts moved points on the grid. Points move the geometry only, keeping
-// the texture where it was, unless Preserve UVs is on; then moves across the leaf also move it on the picture.
+// the rows and columns they nearly form, Snap puts moved points on the grid. With Preserve UVs on (the default) points
+// move the geometry only and keep their place on the picture, so the texture stretches with the shape; with it off,
+// moves across the leaf also move the point on the picture, so the texture stays put and the cut changes.
 import * as THREE from 'three';
 import { ViewGizmo } from './gizmo.js';
 
@@ -266,8 +267,8 @@ export class Cut3D {
 
   save(list) {
     const c = this.cut;
-    if (this.follow.checked) {
-      // The move across the leaf goes into the picture too, so the texture slides with the point.
+    if (this.follow && !this.follow.checked) {
+      // UVs not kept: the move across the leaf goes into the picture too, so the point samples a new spot.
       const [bx, by] = c.basePx; const [tx, ty] = c.tipPx;
       const L = Math.hypot(tx - bx, ty - by) || 1; const dx = (tx - bx) / L; const dy = (ty - by) / L;
       const all = [c.outlinePx, c.innerPx || [], ...(c.holesPx || [])];

@@ -35,7 +35,7 @@ function placeMode(stored, parentKind) {
 function placementNode(n, parts, parentKind, extra = {}) {
   const mode = placeMode(n.params.place, parentKind);
   return makeNode(`${n.id}#place`, 'Placement', n.on, {
-    ...parts.place, place: mode, levels: mode === 'spline' ? n.params.levels : 1, ...extra,
+    ...parts.place, place: mode, levels: mode === 'spline' ? n.params.levels : 1, inst: n.params.inst, ...extra,
   });
 }
 
