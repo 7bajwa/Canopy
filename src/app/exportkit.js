@@ -25,12 +25,29 @@ export function lineExtents(srcs, table) {
   return ext;
 }
 
+// How deep each line sits in the hierarchy (trunk 0), from the parent index the wind table keeps.
+const depthOf = (table, l, cache) => {
+  if (cache.has(l)) return cache.get(l);
+  let d = 0; let p = Math.round(table[l * WIND_STRIDE + 3]); const seen = new Set([l]);
+  while (p >= 0 && !seen.has(p) && d < 64) { seen.add(p); d++; p = Math.round(table[p * WIND_STRIDE + 3]); }
+  cache.set(l, d);
+  return d;
+};
+
 // One 0..1 value per point for a wind channel: height up the plant, place along its branch (leaves take where they
-// sit on their branch), place along a leaf (0 on branches), or a random number per piece.
+// sit on their branch), place along a leaf (0 on branches), a random number per piece (phase), or how much a point
+// bends with its branches: 0 at the foot of the trunk rising through each level out to the tips (bend).
 export function gradient(src, choice, ctx) {
   const n = src.position.length / 3; const out = new Float32Array(n);
   const { table, ext, lo, hi } = ctx;
   const leaf = src.kind === 'leaf';
+  const depths = ctx.depths ||= new Map();
+  let maxDepth = ctx.maxDepth;
+  if (choice === 'bend' && maxDepth === undefined) {
+    maxDepth = 0;
+    for (let l = 0; l < table.length / WIND_STRIDE; l++) maxDepth = Math.max(maxDepth, depthOf(table, l, depths));
+    ctx.maxDepth = maxDepth;
+  }
   for (let i = 0; i < n; i++) {
     const l = lineOf(src, i); const k = l * WIND_STRIDE;
     const along = () => {
@@ -42,6 +59,13 @@ export function gradient(src, choice, ctx) {
     else if (choice === 'branch') out[i] = leaf ? (l < 0 ? 0 : table[k + 12]) : along();
     else if (choice === 'leaf') out[i] = leaf ? along() : 0;
     else if (choice === 'random') out[i] = l < 0 ? 0 : hash(l, 77);
+    else if (choice === 'bend') {
+      if (l < 0) { out[i] = 0; continue; }
+      // A leaf moves with the point of its branch it hangs on; a branch point by its depth plus how far out it is.
+      const d = depthOf(table, l, depths);
+      const t = leaf ? 1 : along();
+      out[i] = Math.min(1, (d + t) / (maxDepth + 1));
+    }
   }
   return out;
 }

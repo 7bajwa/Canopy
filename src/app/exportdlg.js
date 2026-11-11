@@ -10,8 +10,17 @@ import { download, safeName, saveDocument } from './io.js';
 import { lineOf, lineExtents, windColors, pivotElements, pivotTextures, pivotUvs, bakeVat, piecesOf, pick } from './exportkit.js';
 import { WIND_STRIDE } from '../engine/wind.js';
 
-const opts = { format: 'glb', pack: true, group: 'node', ch: ['none', 'none', 'none', 'none'], pivot: false, vat: false, frames: 30, seconds: 2, strength: 5, rig: false, batch: 'separate' };
-const GRADIENTS = [['none', 'Keep color'], ['height', 'Height, bottom to top'], ['branch', 'Branch, start to end'], ['leaf', 'Leaf, start to end'], ['random', 'Random per piece']];
+const opts = { layout: 'custom', format: 'glb', pack: true, group: 'node', ch: ['none', 'none', 'none', 'none'], pivot: false, vat: false, frames: 30, seconds: 2, strength: 5, rig: false, batch: 'separate' };
+const GRADIENTS = [['none', 'Keep color'], ['height', 'Height, bottom to top'], ['branch', 'Branch, start to end'], ['leaf', 'Leaf, start to end (flutter)'], ['random', 'Random per piece (phase)'], ['bend', 'Bend, trunk to tips']];
+// Ready-made wind layouts. Each sets the four vertex color channels (and Pivot Painter for Unreal); the matching
+// sample shaders are in the app's wind folder (wind/README.md).
+const LAYOUTS = {
+  custom: { label: 'Custom (set the channels below)' },
+  canopy: { label: 'Canopy: R flutter, G phase, B bend (Unity, Unreal, Godot shaders included)', ch: ['leaf', 'random', 'bend', 'none'], pivot: false },
+  godot: { label: 'Godot tutorial: R sway (bend), G phase', ch: ['bend', 'random', 'none', 'none'], pivot: false },
+  unreal: { label: 'Unreal Pivot Painter 2 + Canopy colors', ch: ['leaf', 'random', 'bend', 'none'], pivot: true },
+  none: { label: 'No wind data (keep colors)', ch: ['none', 'none', 'none', 'none'], pivot: false },
+};
 
 let root = null;
 // batch: { items: presets, each(items, fn) } exports every preset, each as its own file or side by side in one.
@@ -40,7 +49,15 @@ export function openExport(view, toast, batch = null) {
     g.append(selectField('Export as', opts.group, [['single', 'One single mesh'], ['node', 'One mesh per node'], ['instances', 'Each piece on its own, with its transform']], (v) => { opts.group = v; draw(); }));
     g.append(el('p', 'hint', 'Each piece is a branch, a leaf or a copy, with its pivot at its base and turned the way it grows, so it can be moved in another app.'));
     const w = sec('Wind data', false);
-    ['R', 'G', 'B', 'A'].forEach((c, i) => w.append(selectField(`Vertex color ${c}`, opts.ch[i], GRADIENTS, (v) => { opts.ch[i] = v; })));
+    w.append(selectField('Layout', opts.layout, Object.entries(LAYOUTS).map(([k, v]) => [k, v.label]), (v) => {
+      opts.layout = v; const L = LAYOUTS[v];
+      if (L.ch) { opts.ch = [...L.ch]; opts.pivot = L.pivot; }
+      draw();
+    }));
+    const shaders = el('a', 'wide-link', 'Sample wind shaders for Unity, Unreal and Godot');
+    shaders.href = './wind/README.md'; shaders.target = '_blank'; shaders.rel = 'noopener';
+    w.append(shaders);
+    ['R', 'G', 'B', 'A'].forEach((c, i) => w.append(selectField(`Vertex color ${c}`, opts.ch[i], GRADIENTS, (v) => { opts.ch[i] = v; opts.layout = 'custom'; })));
     w.append(el('p', 'hint', 'A channel set to a gradient replaces that part of the vertex color.'));
     w.append(checkField('Pivot Painter 2 textures', opts.pivot, (v) => { opts.pivot = v; }));
     w.append(el('p', 'hint', 'Pivot position + parent index, and X axis + extent, as EXR textures; each piece points at its pixel in the second UV set.'));

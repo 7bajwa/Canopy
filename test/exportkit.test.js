@@ -92,3 +92,18 @@ test('gridify pulls nearly lined-up points into straight rows and columns', asyn
   assert.equal(out[0][1], out[3][1], 'one straight row');
   assert.notEqual(out[0][0], out[3][0], 'far apart points stay apart');
 });
+
+test('bend rises from the trunk foot through each level to the tips', async () => {
+  const { gradient } = await import('../src/app/exportkit.js');
+  const { WIND_STRIDE } = await import('../src/engine/wind.js');
+  // Trunk (line 0) straight up from 0 to 100, a branch (line 1) on it going +x from y 100.
+  const table = new Float32Array(2 * WIND_STRIDE);
+  table.set([0, 0, 0, -1, 0, 1, 0], 0);
+  table.set([0, 100, 0, 0, 1, 0, 0], WIND_STRIDE);
+  const src = { kind: 'bark', position: new Float32Array([0, 0, 0, 0, 100, 0, 50, 100, 0]), wind: new Float32Array([0, 0, 0, 0, 0, 0, 1, 0, 0]) };
+  const ext = new Map([[0, 100], [1, 50]]);
+  const g = gradient(src, 'bend', { table, ext, lo: 0, hi: 100 });
+  assert.equal(g[0], 0);
+  assert.ok(Math.abs(g[1] - 0.5) < 1e-6, `trunk top is half way: ${g[1]}`);
+  assert.ok(Math.abs(g[2] - 1) < 1e-6, `branch tip is 1: ${g[2]}`);
+});
