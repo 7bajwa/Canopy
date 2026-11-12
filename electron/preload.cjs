@@ -13,4 +13,9 @@ contextBridge.exposeInMainWorld('canopyHost', {
 contextBridge.exposeInMainWorld('canopyApp', {
   saveAs: (name, text) => ipcRenderer.invoke('canopy:save-as', name, text),
   backup: (when, text, name) => ipcRenderer.invoke('canopy:backup', when, text, name),
+  // The page can't fetch its own files from disk; the library and samples come through here.
+  readSample: (name) => ipcRenderer.invoke('canopy:read-sample', name),
+  // Updates: download the new Windows build from the GitHub release, install it over this one, restart.
+  update: (url) => ipcRenderer.invoke('canopy:update', url),
+  onUpdateProgress: (fn) => { ipcRenderer.removeAllListeners('canopy:update-progress'); ipcRenderer.on('canopy:update-progress', (e, p) => fn(p)); },
 });

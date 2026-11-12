@@ -1,18 +1,18 @@
-// Bake from scan: textures for a tube taken from a scanned (imported) trunk. Draw or pick a Spline that runs up the
+// Scan Bake: textures for a tube taken from a scanned (imported) trunk. Draw or pick a Spline that runs up the
 // middle of the scan; the scan is unwrapped around it like a cylinder (u around, v along), at a size that keeps the
 // tube's own aspect (width you pick, height from length over circumference, or the nearest power of two), and baked
 // on the GPU: color from the scan's own texture, height from how far the surface stands out from the fitted
 // radius, and a normal map from that height. The Spline can take the scan's thickness along its length, and the
 // maps become its bark material, laid once around and once along.
 import * as THREE from 'three';
-import { doc, commit, changed } from './doc.js';
+import { doc, commit, changed, addNode, select } from './doc.js';
 import { el, numberField, checkField, selectField } from './fields.js';
 import { floatPanel } from './floatpanel.js';
 import { newMaterial } from '../graph/materials.js';
 import { dilate } from '../leaf/imgops.js';
 import { zipStore } from './zip.js';
 import { download, safeName } from './io.js';
-import { lineFrames, cylCoords, fitRadius, unwrapSize, heightToNormal } from '../engine/unwrap.js';
+import { lineFrames, cylCoords, fitRadius, unwrapSize, heightToNormal, scanCenterline } from '../engine/unwrap.js';
 
 const BINS = 24;
 
@@ -46,7 +46,7 @@ function dataUrl(img) {
 
 export function makeScanBake({ view, toast }) {
   const o = { scan: '', spline: '', width: 1024, pow2: false, depth: 4, strength: 2, flipV: false, fit: true };
-  let panel = null; let info = null; let listed = '';
+  let panel = null; let info = null; let listed = ''; let fitPending = false; let measureInfo = null;
   const nodeList = () => doc.graph.nodes.filter((n) => n.type === 'Mesh' || n.type === 'Spline').map((n) => n.id + n.name).join('|');
 
   function measure() {
@@ -128,6 +128,19 @@ export function makeScanBake({ view, toast }) {
     n.params.curves = { ...n.params.curves, radius: { pts: [...m.fit.r].map((r, i) => [i / (BINS - 1), Math.round((r / max) * 1000) / 1000, 's']) } };
   }
 
+  // A new Spline up the middle of the scan, named after it; its thickness follows the scan once it has built.
+  function fitSpline() {
+    const scan = doc.graph.nodes.find((n) => n.id === o.scan);
+    const s = scanMesh(view, o.scan);
+    const pts = s && scanCenterline(s.position);
+    if (!pts) { toast('Import the scan first (Import mesh), and let it show in the view.', 5000); return; }
+    const n = addNode('Spline', (scan?.x ?? 0) + 260, scan?.y ?? 0, { strokes: [{ pts }], radius: 10 });
+    n.name = `${scan?.name?.replace(/\.\w+$/, '') || 'Scan'} trunk`;
+    o.spline = n.id; fitPending = true;
+    select([n.id]); changed({ layout: true }); commit(); draw();
+    toast('Made a Spline up the middle of the scan. Its thickness follows the scan.');
+  }
+
   async function run(apply) {
     const m = measure();
     if (!m) { toast('Pick an imported scan (a Mesh node) and a Spline that runs up its middle, and let the plant build.', 6000); return; }
@@ -159,16 +172,20 @@ export function makeScanBake({ view, toast }) {
     if (!scans.some((n) => n.id === o.scan)) o.scan = scans.find((n) => n.params.shape === 'imported')?.id || scans[0]?.id || '';
     if (!splines.some((n) => n.id === o.spline)) o.spline = splines[0]?.id || '';
     info = el('p', 'hint');
-    const refresh = () => {
+    const refresh = measureInfo = () => {
       const m = measure();
-      info.textContent = m ? `Unwrapped size ${o.width} × ${m.H} (1 : ${(m.H / o.width).toFixed(2)}): ${Math.round(m.F.L)} cm long, about ${Math.round(m.fit.mean * 10) / 10} cm thick on average.` : 'Pick the scan and a Spline running up inside it (the plant must have built).';
+      info.textContent = m ? `Unwrapped size ${o.width} × ${m.H} (1 : ${(m.H / o.width).toFixed(2)}): ${Math.round(m.F.L)} cm long, about ${Math.round(m.fit.mean * 10) / 10} cm thick on average.` : 'Pick the scan, then Fit a Spline to the scan (or pick a Spline running up inside it).';
     };
     const fitBtn = el('button', 'wide', 'Fit Spline thickness to the scan');
     fitBtn.addEventListener('click', () => { const m = measure(); if (!m) { refresh(); return; } fitThickness(m); changed({ layout: true }); commit(); toast('The Spline now follows the scan\'s thickness.'); });
+    const fitLine = el('button', 'wide', 'Fit a Spline to the scan');
+    fitLine.title = 'Makes a new Spline running up the middle of the scan, with the scan’s thickness along it';
+    fitLine.addEventListener('click', fitSpline);
     const go = el('button', 'wide primary', 'Bake and apply to the Spline'); go.addEventListener('click', () => run(true));
     const save = el('button', 'wide', 'Bake and save the maps'); save.addEventListener('click', () => run(false));
     panel.body.replaceChildren(
       selectField('Scan (Mesh)', o.scan, scans.map((n) => [n.id, n.name]), (v) => { o.scan = v; refresh(); }),
+      fitLine,
       selectField('Spline', o.spline, splines.map((n) => [n.id, n.name]), (v) => { o.spline = v; refresh(); }),
       selectField('Width', String(o.width), [256, 512, 1024, 2048, 4096].map((w) => [String(w), `${w} px`]), (v) => { o.width = +v; refresh(); }),
       checkField('Height to the nearest power of two', o.pow2, (v) => { o.pow2 = v; refresh(); }),
@@ -184,11 +201,14 @@ export function makeScanBake({ view, toast }) {
 
   return {
     open() {
-      panel ||= floatPanel('scan-bake', 'Bake from scan', { width: 380 });
+      panel ||= floatPanel('scan-bake', 'Scan Bake', { width: 380 });
       draw();
       panel.show();
     },
     // Meshes imported or Splines added while the panel is open show up in its lists.
-    refresh() { if (panel?.isOpen() && nodeList() !== listed) draw(); },
+    refresh() {
+      if (fitPending) { const m = measure(); if (m) { fitPending = false; fitThickness(m); changed({ layout: true }); commit(); } }
+      if (panel?.isOpen()) { if (nodeList() !== listed) draw(); else measureInfo?.(); }
+    },
   };
 }

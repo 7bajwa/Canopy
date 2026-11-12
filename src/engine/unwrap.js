@@ -89,3 +89,43 @@ export function heightToNormal(img, strength = 2) {
   }
   return { width: w, height: h, data: out };
 }
+
+// The middle line of a scanned trunk: its long axis (the main direction of its points, pointing up), cut into slices
+// along it, each slice's middle taken from the extent of its points (not their average, so uneven scans don't pull
+// it to one side). Returns points from the foot to the top, for a Spline to run up inside the scan.
+export function scanCenterline(V, bins = 16) {
+  const n = V.length / 3;
+  if (n < 4) return null;
+  const m = [0, 0, 0];
+  for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) m[c] += V[i * 3 + c] / n;
+  const cov = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  for (let i = 0; i < n; i++) {
+    const d = [V[i * 3] - m[0], V[i * 3 + 1] - m[1], V[i * 3 + 2] - m[2]];
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) cov[r * 3 + c] += d[r] * d[c];
+  }
+  let a = [0, 1, 0];
+  for (let k = 0; k < 32; k++) {
+    const b = [0, 1, 2].map((r) => cov[r * 3] * a[0] + cov[r * 3 + 1] * a[1] + cov[r * 3 + 2] * a[2]);
+    const l = Math.hypot(...b) || 1; a = b.map((x) => x / l);
+  }
+  if (a[1] < 0) a = a.map((x) => -x);
+  const ref = Math.abs(a[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+  const cross = (p, q) => [p[1] * q[2] - p[2] * q[1], p[2] * q[0] - p[0] * q[2], p[0] * q[1] - p[1] * q[0]];
+  let u = cross(a, ref); const ul = Math.hypot(...u); u = u.map((x) => x / ul);
+  const v = cross(a, u);
+  const dot = (i, w) => (V[i * 3] - m[0]) * w[0] + (V[i * 3 + 1] - m[1]) * w[1] + (V[i * 3 + 2] - m[2]) * w[2];
+  let lo = Infinity; let hi = -Infinity;
+  for (let i = 0; i < n; i++) { const t = dot(i, a); lo = Math.min(lo, t); hi = Math.max(hi, t); }
+  const box = Array.from({ length: bins }, () => [Infinity, -Infinity, Infinity, -Infinity]);
+  for (let i = 0; i < n; i++) {
+    const b = box[Math.min(bins - 1, Math.floor(((dot(i, a) - lo) / (hi - lo || 1)) * bins))];
+    const pu = dot(i, u); const pv = dot(i, v);
+    b[0] = Math.min(b[0], pu); b[1] = Math.max(b[1], pu); b[2] = Math.min(b[2], pv); b[3] = Math.max(b[3], pv);
+  }
+  const at = (t, b) => { const cu = (b[0] + b[1]) / 2; const cv = (b[2] + b[3]) / 2; return [0, 1, 2].map((c) => m[c] + a[c] * t + u[c] * cu + v[c] * cv); };
+  const full = box.map((b, k) => [b, k]).filter(([b]) => b[0] <= b[1]);
+  if (full.length < 2) return null;
+  const step = (hi - lo) / bins;
+  // The ends reach the scan's foot and top, with the middle of the slice beside them.
+  return [at(lo, full[0][0]), ...full.map(([b, k]) => at(lo + (k + 0.5) * step, b)), at(hi, full[full.length - 1][0])];
+}

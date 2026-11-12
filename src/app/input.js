@@ -292,6 +292,8 @@ export function attachInput(stage, graph, view, ui) {
         break;
       case 'tree-tap':
         if (Math.hypot(p.x - g.start.x, p.y - g.start.y) > TAP_MOVE) g.moved = true;
+        // With the entity editor on, a drag on the plant draws a box that picks entities.
+        if (g.moved && ui.gizmo?.on) { graph.box = { x0: Math.min(g.start.x, p.x), y0: Math.min(g.start.y, p.y), x1: Math.max(g.start.x, p.x), y1: Math.max(g.start.y, p.y) }; graph.invalidate(); }
         break;
       case 'pan': {
         const dx = p.x - g.last.x; const dy = p.y - g.last.y;
@@ -395,9 +397,14 @@ export function attachInput(stage, graph, view, ui) {
     switch (g.kind) {
       case 'tree-tap':
       case 'orbit-or-tap':
+        if (g.moved && g.kind === 'tree-tap' && ui.gizmo?.on && graph.box) {
+          const b = graph.box; graph.box = null; graph.invalidate();
+          if (!ui.gizmo.pickBox(b, e.shiftKey)) ui.toast('No entities in that box. Pick the node, or draw the box around where branches and leaves start.');
+          break;
+        }
         if (!g.moved) {
           const hit = view.pick(p.x, p.y);
-          ui.gizmo?.picked(hit);
+          ui.gizmo?.picked(hit, e.shiftKey);
           if (hit) { select([hit.nodeId], e.shiftKey ? 'add' : 'set'); graph.invalidate(); } else if (!e.shiftKey) select([]);
         }
         break;
@@ -489,12 +496,12 @@ export function attachInput(stage, graph, view, ui) {
     if (mod && k === 'v') { paste(); return; }
     if (mod) return;
     if (k === 'f') { frameUnderMouse(); e.preventDefault(); }
-    else if (k === 'delete' || k === 'backspace' || k === 'x') { removeSelection(); }
+    else if (k === 'delete' || k === 'backspace' || k === 'x') { if (!(ui.gizmo?.on && ui.gizmo.removePicked())) removeSelection(); }
     else if (k === 'h') { for (const n of selected()) n.on = n.on === false; changed(); commit(); }
     else if (k === ' ') { e.preventDefault(); ui.addMenu(state.mouse); }
     else if (k === 'tab') { e.preventDefault(); ui.cycleLayout(); }
     else if (k === 'l') { ui.setMode(view.mode === 'mesh' ? 'lines' : 'mesh'); }
-    else if (ui.gizmo?.on && (k === 'w' || k === 'e' || k === 'r')) ui.gizmo.setMode({ w: 'translate', e: 'rotate', r: 'scale' }[k]);
+    else if (ui.gizmo?.on && 'qwer'.includes(k)) ui.xfMode({ q: 'all', w: 'translate', e: 'rotate', r: 'scale' }[k]);
     else if (k === 'escape') { if (state.draw) stopDraw(); else select([]); graph.invalidate(); }
   });
 

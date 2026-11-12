@@ -155,7 +155,7 @@ export function makeEditors(ui) {
       // The picture opens large, with the list to pick another in its corner.
       openImage({
         title: param.l, value: owner[param.k], assets: doc.assets,
-        choices: [...Object.entries(doc.assets).map(([id, a]) => [id, a.name]), ...(param.t === 'atlas' ? atlasChoices() : textureChoices())],
+        choices: [...Object.entries(doc.assets).map(([id, a]) => [id, a.name]), ...(param.t === 'atlas' ? atlasChoices(owner[param.k]) : textureChoices(owner[param.k]))],
         onPick: (id) => choose(id),
         load: async () => { await pickNew(); return owner[param.k]; },
       });

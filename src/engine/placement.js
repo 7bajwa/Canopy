@@ -15,7 +15,7 @@ function emitter(ev, dn, q, out) {
   const identity = !!dn.params.identity;
   const localXf = dn.params.xfSpace !== 'world';
   // Per-copy edits from the Transform gizmo, keyed by the copy's key: t a move (world), q a turn (world quaternion
-  // about the copy's base), s a scale on the copy's own axes.
+  // about the copy's base), s a scale on the copy's own axes, hide when it was deleted.
   // shortcut: keys follow the parent line ids, so a copy's edit can move to another copy when the parents' counts change; store a stable path if that bites.
   const inst = dn.params.inst || null;
   // `mirror` is the second side of a pair (or every other one): its turns run the other way, so pairs open
@@ -51,6 +51,7 @@ function emitter(ev, dn, q, out) {
     const roll = ((q.roll?.(c) || 0) + rollAdd) * DEG;
     if (roll) { uP = rotate(uP, dP, roll); xP = rotate(xP, dP, roll); }
     const ov = inst?.[key];
+    if (ov?.hide) return; // deleted in the entity editor
     if (ov?.q) { dP = norm(rotQ(dP, ov.q)); uP = norm(rotQ(uP, ov.q)); xP = rotQ(xP, ov.q); }
     if (ov?.s) for (let i = 0; i < 3; i++) axes[i] *= ov.s[i];
     const F = localXf ? ownFrame(dP, xP) : ZUP;

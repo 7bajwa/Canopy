@@ -70,6 +70,57 @@ ipcMain.handle('canopy:backup', async (e, when, text, docName) => {
   return true;
 });
 
+ipcMain.handle('canopy:read-sample', async (e, name) => {
+  const file = path.basename(String(name));
+  if (!/^[\w ().-]+\.(canopy|json)$/.test(file)) throw new Error('Not a sample file');
+  return fs.readFile(path.join(__dirname, '..', 'dist', 'samples', file), 'utf8');
+});
+
+// Only this project's own release files are downloaded; GitHub redirects them to its file host.
+const UPDATE_FROM = 'https://github.com/7bajwa/Canopy/releases/download/';
+function download(url, to, onProgress, hops = 0) {
+  return new Promise((resolve, reject) => {
+    require('node:https').get(url, { headers: { 'User-Agent': 'Canopy-updater' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && hops < 5) { res.resume(); download(res.headers.location, to, onProgress, hops + 1).then(resolve, reject); return; }
+      if (res.statusCode !== 200) { res.resume(); reject(new Error(`download answered ${res.statusCode}`)); return; }
+      const total = +res.headers['content-length'] || 0; let got = 0; let last = 0;
+      const out = require('node:fs').createWriteStream(to);
+      res.on('data', (c) => { got += c.length; if (total && got - last > total / 50) { last = got; onProgress(got / total); } });
+      res.pipe(out);
+      out.on('finish', () => out.close(() => resolve()));
+      out.on('error', reject); res.on('error', reject);
+    }).on('error', reject);
+  });
+}
+
+// The install runs after this app has closed: unzip, copy over the install folder (adding and replacing files,
+// never deleting), start the new one. Settings and backups live in the user's app data, not here.
+ipcMain.handle('canopy:update', async (e, url) => {
+  try {
+    if (!app.isPackaged) return 'only the installed PC app updates itself';
+    if (!String(url).startsWith(UPDATE_FROM) || !/\.zip$/i.test(url)) return 'not a Canopy release file';
+    const tmp = path.join(app.getPath('temp'), 'canopy-update');
+    await fs.rm(tmp, { recursive: true, force: true });
+    await fs.mkdir(tmp, { recursive: true });
+    const zip = path.join(tmp, 'canopy.zip');
+    await download(url, zip, (p) => e.sender.send('canopy:update-progress', p));
+    const dest = path.dirname(process.execPath);
+    const ps1 = path.join(tmp, 'install.ps1');
+    await fs.writeFile(ps1, [
+      'param([string]$Zip, [string]$Dest, [int]$Wait, [string]$Exe)',
+      "Wait-Process -Id $Wait -ErrorAction SilentlyContinue",
+      "$out = Join-Path (Split-Path $Zip) 'files'",
+      'Expand-Archive -LiteralPath $Zip -DestinationPath $out -Force',
+      '$src = Get-ChildItem -LiteralPath $out -Directory | Select-Object -First 1',
+      'robocopy $src.FullName $Dest /E /R:5 /W:1 /NFL /NDL /NJH /NJS | Out-Null',
+      'Start-Process -FilePath $Exe',
+    ].join('\r\n'), 'utf8');
+    require('node:child_process').spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ps1, '-Zip', zip, '-Dest', dest, '-Wait', String(process.pid), '-Exe', process.execPath], { detached: true, stdio: 'ignore' }).unref();
+    setTimeout(() => app.quit(), 300);
+    return true;
+  } catch (err) { return err.message; }
+});
+
 app.whenReady().then(() => {
   const win = mainWin = new BrowserWindow({
     width: 1600, height: 950, autoHideMenuBar: true, backgroundColor: '#11160f', title: 'Canopy',

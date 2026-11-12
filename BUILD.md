@@ -1,13 +1,13 @@
 # Building Canopy
 
 All builds run the same editor from the `dist` folder, so a fix reaches every device after a build. Finished
-builds go into `release/v0.NN/` (the version from `package.json`, now v0.45), one folder each:
+builds go into `release/v0.NN/` (the version from `package.json`, now v0.46), one folder each:
 
 | Build | Command | Result |
 |---|---|---|
-| Website | `npm run web:build` | `release/v0.45/Web/` and `release/web/` (published) |
-| Windows | `npm run pc:build` | `release/v0.45/Win/Canopy-win32-x64/Canopy.exe` — copy the whole folder |
-| Android (test) | `npm run android:build` | `release/v0.45/Apk/Canopy-v0.45.apk` |
+| Website | `npm run web:build` | `release/v0.46/Web/` and `release/web/` (published) |
+| Windows | `npm run pc:build` | `release/v0.46/Win/Canopy-win32-x64/Canopy.exe` — copy the whole folder |
+| Android (test) | `npm run android:build` | `release/v0.46/Apk/Canopy-v0.46.apk` |
 
 `npm run docs` rewrites the node reference (`public/docs/index.html`); the website and Windows builds do it too.
 
@@ -31,13 +31,13 @@ On an https address the editor also installs from the browser's menu and works o
 
 ## Windows
 
-`npm run pc:build`, then open `release/v0.45/Win/Canopy-win32-x64/Canopy.exe`. The first build downloads Electron
+`npm run pc:build`, then open `release/v0.46/Win/Canopy-win32-x64/Canopy.exe`. The first build downloads Electron
 (about 100 MB).
 
 ## Android
 
 The Android tools are set up on this computer (Android SDK 35 and Java 21). `npm run android:build` makes the
-test app in `release/v0.45/Apk/Canopy-v0.45.apk`. Copy it to the device and open it (allow installs from this
+test app in `release/v0.46/Apk/Canopy-v0.46.apk`. Copy it to the device and open it (allow installs from this
 source), or with USB debugging on run `adb install` with its path. A store release needs a signing key, which is a
 separate step.
 

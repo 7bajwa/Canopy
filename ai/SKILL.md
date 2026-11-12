@@ -16,6 +16,7 @@ description: Build or change plants in the Canopy plant editor through its MCP s
 Key settings: `length`, `steps`, `place` (`spline` along a parent, `mesh` on a Mesh), `density`, `start`/`end`,
 `pattern`, `tilt` (angle), `rotation` (around the parent), `roll`, `mods` (Noise, Gravity), `meshType`
 (`tube`, `leaf`, `cutout`), `radius`, `autoRadius`, `width`, fold/curl/bend (`angleAcross`, `incAcross`, `incAlong`),
-`material`, `vary` and `curves` for variation.
+`material` (make one with `add_material`), `vary` ({ key: amount }) and `curves` ({ key: { pts: [[x, y]] } }) for variation,
+`mods` ({ gravity: { vector, strength }, noise: { strength, scale } }).
 
 Recipes and ranges: see `docs/ai-guide.md`.

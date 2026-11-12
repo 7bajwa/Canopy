@@ -73,8 +73,8 @@
     <div class="group" data-group="out" data-label="Render, Bake, Pack">
       <button data-act="render" title="Quick render: a picture with the render settings" aria-label="Render"><svg viewBox="0 0 24 24"><path d="M3 8h4l2-3h6l2 3h4v12H3z"/><circle cx="12" cy="13" r="4"/></svg></button>
       <button data-act="renderSettings" title="Render settings: size, camera, background and filters, with a preview" aria-label="Render settings"><svg viewBox="0 0 24 24"><path d="M3 8h4l2-3h6l2 3h1M3 8v12h10"/><circle cx="10" cy="13" r="3.5"/><path d="M19 13v8M16 16h6M16 19h6" /></svg></button>
-      <button data-act="bake" title="Bake" aria-label="Bake"><svg viewBox="0 0 24 24"><path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/><path d="M12 7v10M8.5 10.5L12 7l3.5 3.5"/></svg></button>
-      <button data-act="scanBake" title="Bake from scan: unwrap a scanned trunk around a Spline into color, height and normal maps" aria-label="Bake from scan"><svg viewBox="0 0 24 24"><path d="M8 3c-2 3-2 15 0 18M16 3c2 3 2 15 0 18M8 3h8M8 21h8"/><path d="M12 7v10M10 9l2-2 2 2"/></svg></button>
+      <button data-act="bake" title="Atlas Bake: bake the plant into a texture atlas" aria-label="Atlas Bake"><svg viewBox="0 0 24 24"><path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/><path d="M12 7v10M8.5 10.5L12 7l3.5 3.5"/></svg></button>
+      <button data-act="scanBake" title="Scan Bake: unwrap a scanned trunk around a Spline into color, height and normal maps" aria-label="Scan Bake"><svg viewBox="0 0 24 24"><path d="M8 3c-2 3-2 15 0 18M16 3c2 3 2 15 0 18M8 3h8M8 21h8"/><path d="M12 7v10M10 9l2-2 2 2"/></svg></button>
       <button data-act="pack" title="Pack" aria-label="Pack"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 12h9V3M12 16h9M16 12v9"/></svg></button>
     </div>
   </nav>
@@ -91,7 +91,7 @@
   <div id="splitter" hidden title="Drag to resize the two halves" aria-hidden="true"></div>
   <div id="dials"><canvas data-dial="sun" title="Light: click the middle to turn it on or off, drag the dot to turn it" aria-label="Light"></canvas><canvas data-dial="wind" title="Wind: click the middle to turn it on or off, drag the dot to turn its direction" aria-label="Wind"></canvas><button data-act="scale" class="dial-btn" title="Scale indicator: a figure and ruler beside the plant" aria-label="Scale indicator" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 3v18M4 7h4M4 12h6M4 17h4"/><circle cx="16" cy="6" r="2"/><path d="M16 8v7M12.500 11h7M16 15l-3 6M16 15l3 6"/></svg></button></div>
   <canvas id="gizmo" aria-label="View gizmo: click an axis to look straight down it"></canvas>
-  <div id="xfbar" role="group" aria-label="Transform" hidden><button data-xf="translate" aria-pressed="true">Move</button><button data-xf="rotate" aria-pressed="false">Rotate</button><button data-xf="scale" aria-pressed="false">Scale</button><button data-xf-scope="copy" aria-pressed="true" title="Edit only the copy you clicked in the 3D view">This copy</button><button data-xf-scope="node" aria-pressed="false" title="Edit the node's Transform, so every copy follows">All copies</button><button data-xf-reset title="Undo the clicked copy's own move, turn and scale">Reset copy</button><button data-xf-remove title="Remove the picked nodes">Remove</button></div>
+  <div id="xfbar" role="group" aria-label="Entity editor" hidden><button data-xf="all" aria-pressed="true" title="Transform: move, turn and scale in one (Q)" aria-label="Transform"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M12 3l-2.5 2.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5"/><circle cx="12" cy="12" r="6"/><rect x="10.5" y="10.5" width="3" height="3"/></svg></button><button data-xf="translate" aria-pressed="false" title="Move (W)" aria-label="Move"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M12 3l-2.5 2.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5"/></svg></button><button data-xf="rotate" aria-pressed="false" title="Rotate (E)" aria-label="Rotate"><svg viewBox="0 0 24 24"><path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M19 4v4h-4"/></svg></button><button data-xf="scale" aria-pressed="false" title="Scale (R)" aria-label="Scale"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="10" height="10"/><path d="M11 13l9-9M14 4h6v6"/></svg></button><span class="sep"></span><button data-xf-scope="copy" aria-pressed="true" title="Edit the entities you click in the 3D view. Shift-click adds; dragging a box picks those of the selected node">Entity</button><button data-xf-scope="node" aria-pressed="false" title="Edit the node&#39;s Transform, so all its entities follow">All entities</button><span class="sep"></span><button data-xf-reset title="Reset: undo the edit of the current tool (everything with Transform) on the picked entities, or on the node with All entities" aria-label="Reset"><svg viewBox="0 0 24 24"><path d="M5 12a7 7 0 1 0 2.05-4.95"/><path d="M5 4v4h4"/></svg></button><button data-xf-remove title="Delete the picked entities (Delete key); undo brings them back" aria-label="Delete"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button></div>
   <div id="bake-frame" hidden><i class="bake-edge t"></i><i class="bake-edge r"></i><i class="bake-edge b"></i><i class="bake-edge l"></i><i class="bake-move" title="Drag to move the frame"></i><i class="bake-corner" title="Drag to resize the frame"></i></div>
   <div id="nav2d" class="nav" role="group" aria-label="Move the graph">
     <div class="nav-grip" title="Drag to move this bar up or down" aria-hidden="true"></div>
@@ -196,8 +196,8 @@
     </div>
   </div>
 </section>
-<section id="bake" role="dialog" aria-label="Bake" hidden>
-  <h2>Bake</h2>
+<section id="bake" role="dialog" aria-label="Atlas Bake" hidden>
+  <h2>Atlas Bake</h2>
   <p class="hint">Frame part of the plant, pick a view, then bake its maps into textures and a new material. Drag the frame's edge to move it and its corner to resize it.</p>
   <div class="bake-body"></div>
   <button class="wide" data-close>Done</button>

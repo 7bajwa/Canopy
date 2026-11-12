@@ -1,4 +1,5 @@
 // The Settings window, in tabs, each made of sections that fold open and shut.
+import { VERSION } from './updater.js';
 import { doc, regenerate, commit } from './doc.js';
 import { el, numberField, checkField, selectField } from './fields.js';
 import { THEMES, THEME_KEYS, themeOf } from './themes.js';
@@ -16,14 +17,16 @@ const ICON = {
 };
 const TABS = [['view', 'View'], ['nav', 'Navigation'], ['bar', 'Toolbar'], ['render', 'Render'], ['wind', 'Wind'], ['scale', 'Scale and ground'], ['system', 'System'], ['dev', 'Developer']];
 let tab = 'view';
-const open = new Set(['Theme', 'Layout', 'Toolbar groups', 'Picture', 'Gusts', 'Scale indicator', 'Ground', 'Backups', 'AI control']);
+const open = new Set(['Updates', 'Theme', 'Layout', 'Toolbar groups', 'Picture', 'Gusts', 'Scale indicator', 'Ground', 'Backups', 'AI control']);
 
 export function openSettings(root, prefs, setPref) {
   const body = root.querySelector('.settings-body');
   body.replaceChildren();
   const bar = el('div', 'settings-tabs');
   bar.setAttribute('role', 'tablist');
-  for (const [k, l] of TABS) {
+  // The Developer tab (AI control) is ours for now: Ctrl+Shift+D shows or hides it.
+  if (tab === 'dev' && !prefs.devMode) tab = 'view';
+  for (const [k, l] of TABS.filter(([k]) => k !== 'dev' || prefs.devMode)) {
     const b = el('button', 'icon-tab');
     b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>`;
     b.title = l; b.setAttribute('aria-label', l);
@@ -139,7 +142,7 @@ export function openSettings(root, prefs, setPref) {
     add(reset);
   } else if (tab === 'bar') {
     head('Toolbar groups');
-    note('Each row is one group. First: fold it into one button (it does the last thing picked; hold it for the list). Then: hide the whole group. Then each button: lit shows it on the toolbar.');
+    note('Each row is one group. First: fold it into one button that opens its list. Then: hide the whole group. Then each button: lit shows it on the toolbar.');
     const icon = (path) => `<svg viewBox="0 0 24 24" aria-hidden="true">${path}</svg>`;
     const FOLD = icon('<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M9 11l3 3 3-3"/>');
     const EYE = icon('<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>');
@@ -206,6 +209,13 @@ export function openSettings(root, prefs, setPref) {
     check('Keep backups while I work', 'backupOn');
     num('Save a backup every', 'backupMin', { min: 0.5, max: 120, unit: 'min' });
     note('The PC app keeps them beside the saved file, or in its own Backups folder before the first save; the browser keeps the latest ones on this device.');
+    head('Updates');
+    check('Check for updates when Canopy starts', 'updateCheck');
+    check('Install updates without asking', 'updateAuto');
+    const now = el('button', 'btn wide', 'Check now');
+    now.addEventListener('click', () => document.dispatchEvent(new CustomEvent('canopy:check-update')));
+    add(now);
+    note(`This is Canopy ${VERSION}. Updates come from the Canopy releases on GitHub. The PC app downloads the new version, installs it over itself and restarts; the Android app opens the new app to install; the website reloads.`);
     head('Undo');
     num('Steps to remember', 'undoSteps', { min: 5, max: 500, int: true });
     note('How many changes Undo can take back. More steps use more memory with large imported meshes.');

@@ -34,12 +34,12 @@ in **degrees**. The node reference (`docs/index.html` in the app) lists every se
 | `roll` | Turn on its own axis | |
 | `scale` | Size of each copy (%) | |
 | `tipOn`, `tipTilt` | A copy at the parent's tip, so lines don't end cut | on for branches |
-| `mods` | Direction modifiers on the line: Noise (`strength`, `scale`), Gravity (`vector`, `strength`; up `[0,1,0]` with 0.2–0.6 for branches seeking light; down for drooping leaves 0.6–1.6) | |
+| `mods` | Direction modifiers on the line, by id: `{ noise: { strength, scale }, gravity: { vector, strength } }` (up `[0,1,0]` with 0.2–0.6 for branches seeking light; down `[0,-1,0]` 0.6–1.6 for drooping leaves). Other `Dir_` types from `schema` are added by type: `{ Dir_Random: { max: 30 } }` | |
 | `meshType` | `tube` (bark), `leaf` (blade), `cutout` (leaf picture), `none` | |
 | `radius` (Thickness) | Tube radius (cm); `autoRadius` follows the parent | trunk 10–30, branch 2–12, twig 0.3–3 |
 | `width` | Blade half-width (cm); its curve is the leaf outline | grass 0.8–1.5, needle 0.3–0.5 |
 | `angleAcross` (Fold), `incAcross` (Curl), `angleAlong` (Angle), `incAlong` (Bend), `leafTwist` | Leaf shape | fold 8–20 |
-| `material` | A material id from `schema().materials` | |
+| `material` | A material id from `schema().materials`, or one you make with `add_material({ name, color, roughness, translucency })` | leaves: roughness 0.45, translucency 0.3 |
 | `windPower`, `windSpeed`, `windFlutter` | How it sways | 100 is normal |
 
 ## Recipes (numbers from the built-in plants)

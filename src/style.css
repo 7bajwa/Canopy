@@ -520,7 +520,10 @@ body[data-bar=left] .tools .sep, body[data-bar=right] .tools .sep { width: auto;
 /* The Transform tool's modes, and the touch button for the picked nodes, at the bottom of the 3D view. */
 #xfbar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 6; display: flex; gap: 4px; padding: 4px; background: var(--bar-bg, rgba(20, 27, 18, .85)); border: 1px solid var(--line); border-radius: 8px; zoom: var(--ui); }
 #xfbar[hidden] { display: none; }
-#xfbar button { padding: 5px 10px; border-radius: 5px; }
+#xfbar button { padding: 5px 10px; border-radius: 5px; display: flex; align-items: center; }
+#xfbar button:has(svg) { padding: 5px 7px; }
+#xfbar svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+#xfbar .sep { width: 1px; margin: 3px 2px; background: var(--line); }
 #xfbar button[aria-pressed=true] { background: rgba(74, 134, 16, .7); }
 body[data-bar=bottom] #xfbar { bottom: 64px; }
 
@@ -531,3 +534,13 @@ body[data-bar=bottom] #xfbar { bottom: 64px; }
 .float-body { overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
 .float-body .field { grid-template-columns: 130px 1fr; }
 .render-preview { width: 100%; background: repeating-conic-gradient(#222 0 25%, #2c2c2c 0 50%) 0 0 / 16px 16px; border: 1px solid var(--line); border-radius: var(--r); }
+
+/* Library: plants to start from, as a grid of thumbnails. */
+.library-card { width: min(760px, calc(94vw / var(--ui))); }
+.library-head { display: flex; align-items: center; justify-content: space-between; }
+.library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; overflow: auto; padding: 4px 2px; }
+.library-item { display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: rgba(0, 0, 0, .2); text-align: left; cursor: pointer; }
+.library-item:hover, .library-item:focus-visible { border-color: var(--accent, #6ea336); }
+.library-item img { width: 100%; aspect-ratio: 1; object-fit: contain; border-radius: 4px; background: rgba(0, 0, 0, .25); }
+.library-name { font-weight: 600; }
+.library-price { font-size: .85em; opacity: .75; }

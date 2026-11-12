@@ -40,6 +40,7 @@ const TOOLS = [
   { name: 'connect', app: 'connect', description: 'Make node "to" grow from node "from".', inputSchema: obj({ from: { type: 'string' }, to: { type: 'string' } }, ['from', 'to']) },
   { name: 'remove_node', app: 'removeNode', description: 'Delete a node by id.', inputSchema: obj({ id: { type: 'string' } }, ['id']) },
   { name: 'render', app: 'render', description: 'A PNG picture of the plant as it is now, to compare with what you are aiming for.', inputSchema: obj({ size: { type: 'number' } }) },
+  { name: 'add_material', app: 'addMaterial', description: 'Make a plain material: color (#rrggbb), roughness 0..1, translucency 0..1 (light through leaves). Returns its id; give it to a node as params.material.', inputSchema: obj({ name: { type: 'string' }, color: { type: 'string' }, roughness: { type: 'number' }, translucency: { type: 'number' } }, ['color']) },
   { name: 'stats', app: 'stats', description: 'How big the plant is: lines, triangles, points and build time.', inputSchema: obj({}) },
 ];
 

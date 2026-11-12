@@ -23,3 +23,13 @@ test('a cylinder scan around a straight spline unwraps to its radius, length and
   const n = heightToNormal(flat).data;
   assert.deepEqual([n[0], n[1], n[2]], [128, 128, 255]);
 });
+
+test('scanCenterline finds the middle of a leaning, uneven trunk from foot to top', async () => {
+  const { scanCenterline } = await import('../src/engine/unwrap.js');
+  // A ring every 10 cm, centered on x = 30 + 0.1 * y, with more points on one side.
+  const V = [];
+  for (let y = 0; y <= 300; y += 10) for (let i = 0; i < 40; i++) { const a = (i / 40) * Math.PI * (i % 2 ? 2 : 1); V.push(30 + y * 0.1 + 20 * Math.cos(a), y, 20 * Math.sin(a)); }
+  const pts = scanCenterline(new Float32Array(V), 10);
+  assert.ok(pts[0][1] < 1 && pts[pts.length - 1][1] > 299, 'foot to top');
+  for (const p of pts) assert.ok(Math.abs(p[0] - (30 + p[1] * 0.1)) < 3 && Math.abs(p[2]) < 3, `on the axis: ${p.map((x) => x.toFixed(1))}`);
+});

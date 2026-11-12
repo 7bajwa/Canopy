@@ -154,7 +154,7 @@ export class MaterialEditor {
     const add = (id, text) => { const o = el('option', '', text); o.value = id; tex.append(o); };
     add('', 'No texture');
     for (const [id, a] of Object.entries(doc.assets)) add(id, a.name);
-    for (const [id, text] of [...(s.k === 'color' ? atlasChoices() : []), ...textureChoices()]) add(id, text);
+    for (const [id, text] of [...(s.k === 'color' ? atlasChoices(m[s.map]) : []), ...textureChoices(m[s.map])]) add(id, text);
     add('__load', 'Load image…');
     tex.value = m[s.map] || '';
     const load = async () => {
@@ -169,7 +169,7 @@ export class MaterialEditor {
     thumb.style.cursor = 'zoom-in';
     thumb.addEventListener('click', () => openImage({
       title: `${s.l} map`, value: m[s.map], assets: doc.assets, load,
-      choices: [...Object.entries(doc.assets).map(([id, a]) => [id, a.name]), ...(s.k === 'color' ? atlasChoices() : []), ...textureChoices()],
+      choices: [...Object.entries(doc.assets).map(([id, a]) => [id, a.name]), ...(s.k === 'color' ? atlasChoices(m[s.map]) : []), ...textureChoices(m[s.map])],
       onPick: (id) => {
         if (id && ![...tex.options].some((o) => o.value === id)) { const o = el('option', '', doc.assets[id]?.name || id); o.value = id; tex.insertBefore(o, tex.lastChild); }
         tex.value = id || ''; tex.dispatchEvent(new Event('change'));

@@ -6,7 +6,8 @@ import './style.css';
 import { doc, on, loadGraph, resetHistory, regenerate, commit, undo, redo, setAutosaver, groupSelected, changed, addNode, connect, select, selected, primary, mergeNodes, hasEdits, removeNodes, duplicate, emit, setHistoryLimit, nodeById } from './app/doc.js';
 import { NODE_TYPES, socketsOf, kindFits, clone, defaultParams } from './graph/schema.js';
 import { makeApi, startBridge, stopBridge } from './app/aibridge.js';
-import { PRESETS, DEFAULT_PRESET } from './graph/presets.js';
+import { makeLibrary } from './app/library.js';
+import { checkForUpdate } from './app/updater.js';
 import { GraphView, setTextScale, NODE_W, setGraphPalette } from './app/graphview.js';
 import { Viewport } from './app/viewport.js';
 import { attachInput } from './app/input.js';
@@ -28,7 +29,7 @@ import { makeLife } from './app/lifeui.js';
 import { applyTheme, themeOf } from './app/themes.js';
 import { WIND_PRESETS } from './graph/defs-unified.js';
 import { dockAt } from './app/dock.js';
-import { saveDocument, readDocumentFile, saveNodes, parseDocument, pickFile, readDataUrl, importMesh, downloadImage, autosave, loadAutosave, documentText, downloadText, safeName, storeBackup } from './app/io.js';
+import { readSample, saveDocument, readDocumentFile, saveNodes, parseDocument, pickFile, readDataUrl, importMesh, downloadImage, autosave, loadAutosave, documentText, downloadText, safeName, storeBackup } from './app/io.js';
 import { makeBackups } from './app/backup.js';
 import { setUnits } from './app/units.js';
 
@@ -43,7 +44,7 @@ function storedPrefs() {
 }
 const prefs = { shadows: view.renderer.shadowMap.enabled, snap: false, graphDim: 1, layout: 'overlay', ui: 1, text: 1, varShow: 'icon', fadeOn: true, fadeStrength: 0.85, fadeSize: 1.25, exposure: 1, envLight: 0.55, navAt: 'middle', units: 'metric', windMin: 0, windMax: 10, gustFreq: 6, windSpeed: 1, windDir: 20, scaleShow: 'both', backupMin: 5, undoSteps: 80, shading: 'pbr', theme: 'forest', grid: true, gizmo: true,
   focus: 'auto', splitAt: 0.5, toolGroups: {}, wireColor: '#000000', wireOpacity: 0.35, dials: true, dialSize: 48, gizmoSize: 96, sunYaw: 38, navY2d: null, navY3d: null,
-  texturesInFile: 'embed', renderSize: 2048, renderHeight: null, renderCamera: 'frame', renderGrid: false, renderPost: {}, glow: false, renderFigure: false, renderGround: true, renderBg: 'clear', renderBgColor: '#11160f', backupOn: true, aiBridge: false,
+  texturesInFile: 'embed', renderSize: 2048, renderHeight: null, renderCamera: 'frame', renderGrid: false, renderPost: {}, glow: false, renderFigure: false, renderGround: true, renderBg: 'clear', renderBgColor: '#11160f', backupOn: true, aiBridge: false, devMode: false, updateCheck: true, updateAuto: false,
   groundOn: true, groundColor: '#3a4a30', groundOpacity: 0.35, groundSize: 200, groundGrid: true, groundShadow: true, swapViews: false, barAt: 'top', navWall2d: null, navWall3d: null, customThemes: {}, ...storedPrefs() };
 const savePrefs = () => localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
 // Pictures were square before height had its own setting.
@@ -362,6 +363,7 @@ const scanBake = makeScanBake({ view, toast: (m, ms) => toast(m, ms) });
 const renderer = makeRender({ view, prefs, setPref: (k, v) => setPref(k, v), toast: (m) => toast(m), download: (u) => downloadImage(u), hide: () => [xfGizmo.helper] });
 const ui = {
   gizmo: xfGizmo,
+  xfMode: (m) => setXfMode(m),
   // The Draw tool's first stroke: a new Spline under the node it was drawn on (or on its own), drawn as a thin tube.
   // A drawn spline. With a picked node as the style, it is a sibling of that node: same mesh, materials, modifiers
   // and look, growing from the same parent, and every child of the picked node grows on it too (children take
@@ -409,10 +411,11 @@ const ui = {
 
 const input = attachInput(stage, graph, view, ui);
 for (const b of document.querySelectorAll('[data-xf-scope]')) b.addEventListener('click', () => { xfGizmo.setScope(b.dataset.xfScope); for (const o of document.querySelectorAll('[data-xf-scope]')) o.setAttribute('aria-pressed', o === b); });
-document.querySelector('[data-xf-reset]')?.addEventListener('click', () => { if (!xfGizmo.resetCopy()) toast('Click a copy in the 3D view first; it has no edit of its own yet.'); });
-for (const b of document.querySelectorAll('[data-xf]')) b.addEventListener('click', () => { xfGizmo.setMode(b.dataset.xf); for (const o of document.querySelectorAll('[data-xf]')) o.setAttribute('aria-pressed', o === b); });
+document.querySelector('[data-xf-reset]')?.addEventListener('click', () => { if (!xfGizmo.reset()) toast('Nothing to reset: the picked entities have no edit for this tool.'); });
+const setXfMode = (m) => { xfGizmo.setMode(m); for (const o of document.querySelectorAll('[data-xf]')) o.setAttribute('aria-pressed', o.dataset.xf === m); };
+for (const b of document.querySelectorAll('[data-xf]')) b.addEventListener('click', () => setXfMode(b.dataset.xf));
 // For touch screens, where there is no Delete key.
-$('[data-xf-remove]').addEventListener('click', () => input.removeSelection());
+$('[data-xf-remove]').addEventListener('click', () => { if (!xfGizmo.removePicked()) toast('Click an entity in the 3D view first (shift-click or drag a box for more).'); });
 const seedPresets = makeSeedPresets({ view, toast, thumb: () => renderer.image({ thumb: true }), exportBatch: (items, each) => openExport(view, toast, { items, each }) });
 // Color boxes everywhere open the app's own color popup beside them.
 takeOverColorInputs();
@@ -650,7 +653,7 @@ const applyBar = () => { document.body.dataset.bar = barSide(); requestAnimation
 const GROUP_START = { make: 'full', vary: 'full', tools: 'full', update: 'hidden', wind: 'hidden' };
 const groupMode = (k) => prefs.toolGroups?.[k] || GROUP_START[k] || 'compact';
 // Each button can also be left out on its own (Settings, Toolbar). A folded group's button does the last thing
-// picked from it; holding it (or its arrow) opens the list, and what is picked there moves to the top.
+// picked from it shows on it; clicking it opens the list.
 const toolKey = (b) => b.dataset.act || b.dataset.layoutBtn || b.dataset.shade || b.dataset.mode || b.getAttribute('aria-label');
 const toolsOf = (g) => [...g.querySelectorAll(':scope > button:not(.group-more), :scope > a')];
 function applyToolbar() {
@@ -673,20 +676,11 @@ function applyToolbar() {
           fn: () => { setPref('groupLast', { ...prefs.groupLast, [g.dataset.group]: toolKey(b) }); b.click(); },
         })));
       };
-      let hold = 0; let held = false;
-      more.addEventListener('pointerdown', () => { held = false; clearTimeout(hold); hold = setTimeout(() => { held = true; list(); }, 450); });
-      more.addEventListener('pointerleave', () => clearTimeout(hold));
-      more.addEventListener('click', (e) => {
-        e.stopPropagation(); clearTimeout(hold);
-        if (held) return;
-        if (e.target.closest('.caret')) { list(); return; }
-        const last = toolsOf(g).find((b) => !b.hidden && toolKey(b) === prefs.groupLast?.[g.dataset.group]) || toolsOf(g).find((b) => !b.hidden);
-        last?.click();
-      });
+      more.addEventListener('click', (e) => { e.stopPropagation(); list(); });
       g.prepend(more);
     }
     const last = shown.find((b) => toolKey(b) === prefs.groupLast?.[g.dataset.group]) || shown[0];
-    more.title = `${last.getAttribute('aria-label') || last.title} (hold for ${g.dataset.label})`;
+    more.title = g.dataset.label;
     more.setAttribute('aria-label', more.title);
     more.innerHTML = `${last.querySelector('svg').outerHTML}<span class="caret">▾</span>`;
   }
@@ -797,7 +791,7 @@ async function quietStore(when, body) {
 let ai = null;
 function aiApi() {
   ai ||= makeApi({
-    doc, NODE_TYPES, defaultParams, addNode, connect, removeNodes, changed, commit,
+    doc, NODE_TYPES, defaultParams, addNode, connect, removeNodes, changed, commit, newMaterial,
     loadGraph: (g, name) => { openGraph(g, name); },
     renderImage: (size) => view.renderImage(size),
   });
@@ -883,31 +877,25 @@ async function openGraph(g, name, assets) {
 }
 
 const okToReplace = () => !hasEdits() || confirm('Replace the current plant? Your unsaved changes will be lost.');
+// The plant is kept through an update (it is saved automatically); only the Undo history goes.
+const okToLeave = () => !hasEdits() || confirm('Canopy restarts to update. Your plant is kept, but Undo can’t go back past this. Go ahead?');
+const library = makeLibrary({ openSample: (s) => openSample(s), toast: (m, ms) => toast(m, ms) });
+// Ctrl+Shift+D shows the Developer settings (AI control), kept out of sight until the library is ready.
+window.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.key.toLowerCase() !== 'd') return;
+  e.preventDefault(); e.stopPropagation();
+  setPref('devMode', !prefs.devMode);
+  if (!prefs.devMode && prefs.aiBridge) setPref('aiBridge', false);
+  toast(prefs.devMode ? 'Developer settings are on: Settings, last tab.' : 'Developer settings are hidden.');
+}, true);
+document.addEventListener('canopy:check-update', () => checkForUpdate({ manual: true, toast, okToLeave }));
 
-// A new file starts with only what it makes: no images or materials carried over from the last one.
-// The built-in plants get their leaf cutouts detected; a person's own materials only get them when asked.
-const openPreset = async (name) => {
-  if (!okToReplace()) return;
-  // The name is edited in the toolbar, so a new plant opens at once.
-  const title = name;
-  const g = PRESETS[name]();
-  await ensureCutouts(g, { fill: true });
-  openGraph(g, title, {});
-};
-// Samples are .canopy files in the samples folder, listed in its index.json, so they can be replaced without a
-// new build. Where files can't be fetched (the PC app opens pages from disk), the built-in ones stand in.
-async function sampleItems() {
-  try {
-    const list = await (await fetch('./samples/index.json')).json();
-    return list.map((s) => ({ label: s.name, fn: () => openSample(s) }));
-  } catch {
-    return Object.keys(PRESETS).map((name) => ({ label: name, fn: () => openPreset(name) }));
-  }
-}
+// Samples are .canopy files in the samples folder, each with its own textures and a thumbnail, listed in its
+// index.json and shown in the Library, so they can be replaced without a new build. A new file starts empty.
 async function openSample(s) {
   if (!okToReplace()) return;
   try {
-    const d = parseDocument(await (await fetch(`./samples/${encodeURIComponent(s.file)}`)).text());
+    const d = parseDocument(await readSample(s.file));
     // The name is edited in the toolbar, so a new plant opens at once.
     const title = s.name;
     const g = d.graph || { nodes: d.nodes, links: d.links, groups: [], settings: {} };
@@ -978,7 +966,7 @@ const actions = {
   open: async (btn) => menu(under(btn), [
     { label: 'Open from file…', fn: openFile },
     { label: 'Add nodes from a file…', fn: importNodes },
-    { head: 'Samples' }, ...(await sampleItems()),
+    { label: 'Library…', fn: () => library.show() },
   ]),
   save: () => saveDocument(prefs.texturesInFile),
   import: importMeshFile,
@@ -1006,7 +994,7 @@ const actions = {
     const on = !xfGizmo.on;
     xfGizmo.setOn(on); press('xform', on);
     $('#xfbar').hidden = !on;
-    if (on && !xfGizmo.target) toast('Pick a Spline or Mesh node, then drag the gizmo in the 3D view. W moves, E turns, R scales.');
+    if (on && !xfGizmo.target) toast('Click a branch, leaf or mesh in the 3D view, or drag a box around several. Q transforms, W moves, E turns, R scales, Delete removes.', 6000);
   },
   pen() {
     if (input.state.draw?.pen) { input.stopDraw(); return; }
@@ -1073,9 +1061,10 @@ layout();
   let saved = null;
   try { saved = await loadAutosave(); } catch (e) { console.warn('No automatic save available', e); }
   if (saved?.graph?.nodes?.length) await openGraph(saved.graph, saved.name || 'Untitled', saved.assets || {});
-  else { const g = PRESETS[DEFAULT_PRESET](); await ensureCutouts(g, { fill: true }); await openGraph(g, DEFAULT_PRESET); }
+  else { await openGraph({ nodes: [], links: [], groups: [], materials: [], settings: { seed: 1 } }, 'Untitled', {}); library.show(); }
   resetHistory();
   $('#boot').remove();
+  if (prefs.updateCheck) setTimeout(() => checkForUpdate({ auto: prefs.updateAuto, toast, okToLeave }), 4000);
   if (document.fonts?.ready) document.fonts.ready.then(() => graph.invalidate());
 })();
 

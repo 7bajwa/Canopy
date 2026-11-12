@@ -81,6 +81,15 @@ export function parseDocument(text) {
   return data;
 }
 
+// A file from the app's samples folder. The PC app opens its pages from disk, where fetch can't reach, so it reads
+// them through its own host.
+export async function readSample(name) {
+  if (window.canopyApp?.readSample) return window.canopyApp.readSample(name);
+  const r = await fetch(`./samples/${encodeURIComponent(name)}`);
+  if (!r.ok) throw new Error(`${name} is missing`);
+  return r.text();
+}
+
 export const pickFile = (accept) => new Promise((resolve) => {
   const i = document.createElement('input');
   i.type = 'file';

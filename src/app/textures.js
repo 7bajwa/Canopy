@@ -13,8 +13,10 @@ const ATLAS = {
   'atlas:autumn': { label: 'Leaf atlas: autumn', a: '#a3461a', b: '#e0a22c', vein: '#f3d27c' },
 };
 
-export const textureChoices = () => Object.entries(BARK).map(([id, v]) => [id, v.label]);
-export const atlasChoices = () => Object.entries(ATLAS).map(([id, v]) => [id, v.label]);
+// The painted ones are no longer offered (a new plant starts with no textures; the Library's plants carry their own),
+// but a file that still uses one keeps it, listed as its current value.
+export const textureChoices = (keep) => Object.entries(BARK).filter(([id]) => id === keep).map(([id, v]) => [id, v.label]);
+export const atlasChoices = (keep) => Object.entries(ATLAS).filter(([id]) => id === keep).map(([id, v]) => [id, v.label]);
 
 // Tileable value noise: lattice wraps at the period so the texture has no seam.
 function tileNoise(period, seed) {
