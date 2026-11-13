@@ -1,4 +1,4 @@
-# v0.46 test list
+# v0.45.1 test list
 
 Tick each one when it works on your PC and on the tablet. Notes on anything odd go next to it.
 

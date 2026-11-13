@@ -6,7 +6,9 @@ const SKIP = new Set(['data', 'section', 'action', 'mods', 'obj', 'ref']);
 
 export function makeApi(d) {
   const { doc, NODE_TYPES, defaultParams, addNode, connect, removeNodes, changed, commit, loadGraph, renderImage, newMaterial } = d;
-  const types = () => Object.values(NODE_TYPES).filter((t) => !t.hidden);
+  // Only the two nodes people build with; the engine's inner node types stay out of sight.
+  const OPEN = new Set(['Spline', 'Mesh']);
+  const types = () => Object.values(NODE_TYPES).filter((t) => OPEN.has(t.type));
   const node = (id) => {
     const n = doc.graph.nodes.find((x) => x.id === id);
     if (!n) throw new Error(`There is no node "${id}".`);
@@ -112,7 +114,7 @@ export function makeApi(d) {
       if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.links)) throw new Error('A plant needs nodes and links.');
       const ids = new Set();
       const nodes = graph.nodes.map((n) => {
-        if (!NODE_TYPES[n?.type] || NODE_TYPES[n.type].hidden) throw new Error(`Unknown node type "${n?.type}".`);
+        if (!OPEN.has(n?.type)) throw new Error(`Unknown node type "${n?.type}".`);
         if (typeof n.id !== 'string' || ids.has(n.id)) throw new Error('Every node needs its own id.');
         ids.add(n.id);
         const out = { id: n.id, type: n.type, name: String(n.name || ''), x: +n.x || 0, y: +n.y || 0, on: n.on !== false, params: defaultParams(n.type) };
@@ -128,7 +130,7 @@ export function makeApi(d) {
       return { nodes: nodes.length, links: links.length };
     },
     addNode({ type, name, params, parent } = {}) {
-      if (!NODE_TYPES[type] || NODE_TYPES[type].hidden) throw new Error(`Unknown node type "${type}".`);
+      if (!OPEN.has(type)) throw new Error(`Unknown node type "${type}".`);
       const scratch = { type, params: defaultParams(type) };
       const checked = checkParams(type, extras(scratch, params));
       const p = parent ? node(parent) : null;

@@ -233,9 +233,6 @@ export function openSettings(root, prefs, setPref) {
     head('AI control');
     check('Let an AI assistant build plants here', 'aiBridge');
     note('Off unless you turn it on. In the PC app this opens a private connection on this computer only, which an MCP client can use to read the node list, build or change the plant and look at a render. The guide in the docs folder tells an assistant how plants are made here.');
-    const link = el('a', 'btn wide', 'Open the node reference');
-    link.href = './docs/index.html'; link.target = '_blank';
-    add(link);
   }
 
   root.hidden = false;
