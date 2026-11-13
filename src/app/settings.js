@@ -24,7 +24,7 @@ export function openSettings(root, prefs, setPref) {
   body.replaceChildren();
   const bar = el('div', 'settings-tabs');
   bar.setAttribute('role', 'tablist');
-  // The Developer tab (AI control) is ours for now: Ctrl+Shift+D shows or hides it.
+  // The Developer tab shows only where it has been switched on.
   if (tab === 'dev' && !prefs.devMode) tab = 'view';
   for (const [k, l] of TABS.filter(([k]) => k !== 'dev' || prefs.devMode)) {
     const b = el('button', 'icon-tab');
@@ -203,8 +203,8 @@ export function openSettings(root, prefs, setPref) {
     check('Faint grid on the ground', 'groundGrid');
   } else if (tab === 'system') {
     head('Saving');
-    pick('Textures', 'texturesInFile', [['embed', 'Packed inside the .canopy file'], ['folder', 'Beside it: a .zip with a textures folder']]);
-    note('Packed: one file carries the plant and every picture, nothing to keep track of. Beside it: the pictures stay ordinary files you can open and edit; open the .zip in Canopy to get it all back.');
+    pick('Textures', 'texturesInFile', [['embed', 'Inside the .canopy file'], ['folder', 'Beside it, in a textures folder'], ['linked', 'Where they are in your files']]);
+    note('Inside: one file carries the plant and every picture. Beside it: the pictures are saved as files in a textures folder next to the .canopy (a browser saves both in a .zip). Where they are: the file only points at the pictures you loaded, so editing them shows up the next time it opens; the PC app only, and moving or renaming them breaks the link. Each save also keeps a small picture of the plant in the file.');
     head('Backups');
     check('Keep backups while I work', 'backupOn');
     num('Save a backup every', 'backupMin', { min: 0.5, max: 120, unit: 'min' });

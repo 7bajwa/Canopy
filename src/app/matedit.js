@@ -8,7 +8,7 @@ import { openImage } from './imageview.js';
 import { makeMap, shrink } from '../leaf/imgops.js';
 import { contourCutouts } from '../leaf/contour.js';
 import { materialPixels, detectOpts } from './atlas.js';
-import { pickFile, readDataUrl } from './io.js';
+import { pickFile, readDataUrl, pathOf } from './io.js';
 
 // Every map but the diffuse and normal can read one channel of its image. The color box is what the slot is
 // when no texture is in it, at the value that means "no effect".
@@ -161,7 +161,7 @@ export class MaterialEditor {
       const f = await pickFile('image/*');
       if (!f) return null;
       const id = `img:${Date.now().toString(36)}`;
-      doc.assets[id] = { name: f.name, url: await readDataUrl(f) };
+      doc.assets[id] = { name: f.name, url: await readDataUrl(f), path: pathOf(f) };
       return id;
     };
     // Clicking the picture opens it large, with the same list to pick another.

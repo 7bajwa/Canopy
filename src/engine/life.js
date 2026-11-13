@@ -1,6 +1,6 @@
 // Age, Season and Health: three sliders for the whole plant (graph.settings.life), worked into every line as it is
 // grown, so every node and setting keeps working as before and nothing has to be wired up.
-//   Age 0..1.5: 1 is the plant as designed. Below, it is younger: each level starts growing later (trunk first, then
+//   Age 0..1.5: 1 is the plant as designed. Below, it is younger and smaller: each level starts growing later (trunk first, then
 //     branches from the base upward, twigs, leaves last), lines are shorter (grown from the base, the tip comes last)
 //     and thinner. Above 1 it is older: thicker, and some branches wither.
 //   Season 0..1 around the year: 0 spring (buds and small light leaves), 0.25 summer (as designed), 0.5 autumn
@@ -10,7 +10,6 @@
 // Each leaf and branch draws its own random number from its line id, so moving a slider changes the plant smoothly
 // instead of reshuffling it.
 import { hash, clamp } from './math.js';
-import { cutAt } from './modifiers.js';
 import { finishLine } from './line.js';
 
 export const LIFE_DEFAULTS = { on: false, age: 1, season: 0.25, health: 1, levelDelay: 0.14, spread: 0.12 };
@@ -61,15 +60,28 @@ export function lifeLine(L, line, seed) {
     const ph = r(903);
     line.season = ph;
     if (ph < dropAt(L.season) * (0.85 + 0.3 * ph)) { line.dead = true; return; }
+    // A young plant carries fewer leaves.
+    if (r(905) > 0.3 + 0.7 * Math.min(L.age, 1)) { line.dead = true; return; }
   }
-  // Age: each level waits its turn, and along a parent the ones near the base start first.
+  // Age: each level waits its turn, and along a parent the ones near the base start first. Leaves don't wait for
+  // their level: they come with whatever has grown, so even a seedling has a few.
   const A = Math.min(L.age, 1);
-  const start = Math.min(0.9, level * L.levelDelay + (p ? clamp(line.pos || 0, 0, 1) * L.spread : 0));
-  const t = clamp((A - start) / Math.max(0.05, 1 - start), 0, 1);
-  if (t <= 0.02) { line.dead = true; return; }
+  const along = p ? clamp(line.pos || 0, 0, 1) * L.spread : 0;
+  const start = Math.min(0.9, leafy ? along * 0.5 : level * L.levelDelay + along);
+  let t = clamp((A - start) / Math.max(0.05, 1 - start), 0, 1);
+  if (t <= 0.02) {
+    // Not its turn yet: some stay as short buds, the closer to their turn the more, so young plants carry leaves.
+    if (leafy || r(904) > A / Math.max(start, 1e-3)) { line.dead = true; return; }
+    t = 0.06;
+  }
   let k = t;
   if (leafy) k *= leafSize(L.season);
-  if (k < 0.999 && line.length > 0) { cutAt(line, Math.max(line.length * k, 1e-3), false, 'none'); finishLine(line); }
+  // Shrunk toward its base rather than cut, so what grows along it still has room: a young plant is a small one.
+  if (k < 0.999 && line.length > 0) {
+    const P = line.pts;
+    for (let i = 3; i < P.length; i++) P[i] = P[i % 3] + (P[i] - P[i % 3]) * k;
+    finishLine(line);
+  }
   // Thickness follows age (older than 1 keeps thickening a little).
   line.sizeScale = (line.sizeScale ?? 1) * (leafy ? Math.sqrt(k) : t ** 0.6 * (1 + Math.max(0, L.age - 1) * 0.5));
   if (line.withered && !leafy) line.sizeScale *= 0.85;

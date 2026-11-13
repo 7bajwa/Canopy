@@ -544,3 +544,9 @@ body[data-bar=bottom] #xfbar { bottom: 64px; }
 .library-item img { width: 100%; aspect-ratio: 1; object-fit: contain; border-radius: 4px; background: rgba(0, 0, 0, .25); }
 .library-name { font-weight: 600; }
 .library-price { font-size: .85em; opacity: .75; }
+.library-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 8px; }
+.library-tab { padding: 4px 10px; border-radius: 12px; border: 1px solid var(--line); background: transparent; }
+.library-tab[aria-selected=true] { background: rgba(74, 134, 16, .7); }
+.library-grid { min-height: 200px; }
+.library-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.library-foot .btn { white-space: nowrap; }

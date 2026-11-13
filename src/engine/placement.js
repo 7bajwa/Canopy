@@ -51,7 +51,6 @@ function emitter(ev, dn, q, out) {
     const roll = ((q.roll?.(c) || 0) + rollAdd) * DEG;
     if (roll) { uP = rotate(uP, dP, roll); xP = rotate(xP, dP, roll); }
     const ov = inst?.[key];
-    if (ov?.hide) return; // deleted in the entity editor
     if (ov?.q) { dP = norm(rotQ(dP, ov.q)); uP = norm(rotQ(uP, ov.q)); xP = rotQ(xP, ov.q); }
     if (ov?.s) for (let i = 0; i < 3; i++) axes[i] *= ov.s[i];
     const F = localXf ? ownFrame(dP, xP) : ZUP;
@@ -65,6 +64,8 @@ function emitter(ev, dn, q, out) {
       xf: identity ? shapeXf(rot, axes) : null,
       axisScale: !identity && axes.some((a) => a !== 1) ? { k: axes, f: F.map(M) } : null,
       angleDiv: a / DEG, angleBend: 0, offset: 0, distance: 0, key,
+      // Deleted in the entity editor: it keeps its place in the count, so the others stay as they are.
+      hide: !!ov?.hide,
     });
   };
 }

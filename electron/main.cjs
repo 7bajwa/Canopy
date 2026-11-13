@@ -121,12 +121,73 @@ ipcMain.handle('canopy:update', async (e, url) => {
   } catch (err) { return err.message; }
 });
 
+// Saving with textures beside the file: the .canopy, then a textures folder next to it.
+ipcMain.handle('canopy:save-package', async (e, name, text, files) => {
+  const res = await dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender), { defaultPath: name, filters: [{ name: 'Canopy plant', extensions: ['canopy'] }] });
+  if (res.canceled || !res.filePath) return false;
+  await fs.writeFile(res.filePath, text, 'utf8');
+  savedAs = res.filePath;
+  const dir = path.dirname(res.filePath);
+  for (const f of files || []) {
+    // Names come from the page: only textures/<plain name>.<picture> lands, inside that folder.
+    if (!/^textures\/[\w ().-]+\.(png|jpe?g|webp|bin)$/i.test(String(f?.name))) continue;
+    await fs.mkdir(path.join(dir, 'textures'), { recursive: true });
+    await fs.writeFile(path.join(dir, f.name), Buffer.from(f.data));
+  }
+  return true;
+});
+
+// A picture a file points at, as a data URL: an absolute path, or one relative to the file's folder.
+const PICTURE = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp' };
+ipcMain.handle('canopy:read-image', async (e, file, dir) => {
+  const p = path.isAbsolute(String(file)) ? String(file) : path.join(String(dir || ''), String(file));
+  const type = PICTURE[path.extname(p).toLowerCase()];
+  if (!type) return null;
+  const st = await fs.stat(p).catch(() => null);
+  if (!st?.isFile() || st.size > 200 * 1024 * 1024) return null;
+  return `data:${type};base64,${(await fs.readFile(p)).toString('base64')}`;
+});
+
+// .canopy files open in Canopy and show its icon in Explorer (registered for this user only, no admin needed).
+function registerFileType() {
+  if (!app.isPackaged || process.platform !== 'win32') return;
+  const exe = process.execPath;
+  const reg = (key, value) => require('node:child_process').spawnSync('reg', ['add', `HKCU\\Software\\Classes\\${key}`, '/ve', '/d', value, '/f'], { windowsHide: true });
+  reg('.canopy', 'Canopy.Plant');
+  reg('Canopy.Plant', 'Canopy plant');
+  reg('Canopy.Plant\\DefaultIcon', `"${exe}",0`);
+  reg('Canopy.Plant\\shell\\open\\command', `"${exe}" "%1"`);
+}
+
+// A file Canopy was started with, or handed while it is already open, goes to the page once it is ready for it.
+const fileArg = (argv) => argv.slice(1).find((a) => /\.canopy$/i.test(a) && !a.startsWith('-'));
+let pendingFile = fileArg(process.argv);
+async function sendFile(p) {
+  if (!p) return;
+  try {
+    const text = await fs.readFile(p, 'utf8');
+    savedAs = p;
+    mainWin?.webContents.send('canopy:open-file', { name: path.basename(p), text, dir: path.dirname(p) });
+  } catch { /* a file that can't be read is left alone */ }
+}
+ipcMain.on('canopy:ready', () => { if (pendingFile) { sendFile(pendingFile); pendingFile = null; } });
+if (!app.requestSingleInstanceLock()) app.quit();
+app.on('second-instance', (e, argv) => {
+  if (mainWin) { if (mainWin.isMinimized()) mainWin.restore(); mainWin.focus(); }
+  sendFile(fileArg(argv));
+});
+
 app.whenReady().then(() => {
+  registerFileType();
   const win = mainWin = new BrowserWindow({
     width: 1600, height: 950, autoHideMenuBar: true, backgroundColor: '#11160f', title: 'Canopy',
     icon: path.join(__dirname, '..', 'dist', 'favicon.ico'),
     webPreferences: { contextIsolation: true, nodeIntegration: false, preload: path.join(__dirname, 'preload.cjs') },
   });
+  // Email and web links open outside the app (the Library's Request an asset, GitHub pages).
+  const outside = (url) => /^(mailto:|https:)/i.test(url);
+  win.webContents.on('will-navigate', (e, url) => { if (outside(url)) { e.preventDefault(); require('electron').shell.openExternal(url); } });
+  win.webContents.setWindowOpenHandler(({ url }) => { if (outside(url)) { require('electron').shell.openExternal(url); return { action: 'deny' }; } return { action: 'allow' }; });
   win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
 });
 app.on('window-all-closed', () => { stopBridge(); app.quit(); });

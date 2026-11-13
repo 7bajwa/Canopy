@@ -12,8 +12,9 @@ import { doc, primary, regenerate, changed, commit, on } from './doc.js';
 
 const ZUP = [[1, 0, 0], [0, 0, -1], [0, 1, 0]];
 const R2D = 180 / Math.PI;
-// The combined tool: arrows outside the rings, scale boxes inside them. First in this list wins a press.
-const KINDS = [['translate', 1.15], ['scale', 0.62], ['rotate', 0.95]];
+// The combined tool: arrows outside the rings, scale boxes inside them. First in this list wins a press: the scale
+// boxes sit inside the arrows' pick zones, so they go first.
+const KINDS = [['scale', 0.62], ['translate', 1.15], ['rotate', 0.95]];
 // What the combined tool leaves out, so it reads like Blender's: plane handles, and the view ring and trackball.
 const TRIM = { translate: ['XYZ', 'XY', 'YZ', 'XZ'], scale: ['XY', 'YZ', 'XZ'], rotate: ['XYZE', 'E'] };
 const FIELDS = { translate: ['t'], rotate: ['q'], scale: ['s'], all: ['t', 'q', 's'] };

@@ -1,5 +1,25 @@
 [
  {
+  "name": "Alocasia",
+  "file": "Alocasia.canopy"
+ },
+ {
+  "name": "Areca palm",
+  "file": "Areca palm.canopy"
+ },
+ {
+  "name": "Banana",
+  "file": "Banana.canopy"
+ },
+ {
+  "name": "Banyan",
+  "file": "Banyan.canopy"
+ },
+ {
+  "name": "Bonsai juniper",
+  "file": "Bonsai juniper.canopy"
+ },
+ {
   "name": "Branch for baking",
   "file": "Branch for baking.canopy"
  },
@@ -8,23 +28,87 @@
   "file": "Broadleaf tree.canopy"
  },
  {
+  "name": "Climbing vine",
+  "file": "Climbing vine.canopy"
+ },
+ {
   "name": "Conifer",
   "file": "Conifer.canopy"
+ },
+ {
+  "name": "Dogwood branch",
+  "file": "Dogwood branch.canopy"
+ },
+ {
+  "name": "Dracaena",
+  "file": "Dracaena.canopy"
+ },
+ {
+  "name": "English daisy",
+  "file": "English daisy.canopy"
  },
  {
   "name": "Flowers",
   "file": "Flowers.canopy"
  },
  {
+  "name": "Fountain grass",
+  "file": "Fountain grass.canopy"
+ },
+ {
   "name": "Grass patch",
   "file": "Grass patch.canopy"
+ },
+ {
+  "name": "Grass tufts",
+  "file": "Grass tufts.canopy"
+ },
+ {
+  "name": "Ground creeper",
+  "file": "Ground creeper.canopy"
+ },
+ {
+  "name": "Hanging vine",
+  "file": "Hanging vine.canopy"
  },
  {
   "name": "Junction study (blend close-up)",
   "file": "Junction study (blend close-up).canopy"
  },
  {
+  "name": "Mango tree",
+  "file": "Mango tree.canopy"
+ },
+ {
+  "name": "Oxeye daisies",
+  "file": "Oxeye daisies.canopy"
+ },
+ {
+  "name": "Papaya",
+  "file": "Papaya.canopy"
+ },
+ {
+  "name": "Plumeria",
+  "file": "Plumeria.canopy"
+ },
+ {
+  "name": "Scots pine",
+  "file": "Scots pine.canopy"
+ },
+ {
   "name": "Shrub with berries",
   "file": "Shrub with berries.canopy"
+ },
+ {
+  "name": "Snowdrops",
+  "file": "Snowdrops.canopy"
+ },
+ {
+  "name": "Tall grass",
+  "file": "Tall grass.canopy"
+ },
+ {
+  "name": "Variegated rubber plant",
+  "file": "Variegated rubber plant.canopy"
  }
 ]

@@ -18,14 +18,32 @@ export const safeName = (s) => (s || 'plant').replace(/[^\w\- ]+/g, '').trim() |
 
 export const documentText = () => JSON.stringify({ app: 'canopy', version: 1, name: doc.name, graph: doc.graph, assets: doc.assets });
 
-// Saving: by default one .canopy file with every picture packed inside it. With textures "beside the file" it is a
-// .zip holding the .canopy and a textures folder the .canopy points at (open the zip to get it all back).
-export function saveDocument(textures = 'embed') {
+// Saving, with the pictures in one of three places (Settings → System → Saving):
+//   embed: packed inside the .canopy file (the default).
+//   folder: beside it, in a textures folder; the PC app writes the folder itself, a browser saves a .zip of both.
+//   linked: left where they are on this computer, the file keeps their paths (PC app only; a browser packs them).
+// thumb: a small picture of the plant, kept in the file.
+export async function saveDocument(textures = 'embed', thumb = null) {
   const name = safeName(doc.name);
-  if (textures !== 'folder') { download(`${name}.canopy`, new Blob([documentText()], { type: 'application/json' })); return; }
-  const { text, files } = documentPackage();
-  download(`${name}.zip`, new Blob([zipStore([{ name: `${name}.canopy`, data: text }, ...files])], { type: 'application/zip' }));
+  const app = window.canopyApp;
+  const head = { app: 'canopy', version: 1, name: doc.name, ...(thumb ? { thumb } : {}) };
+  if (textures === 'folder') {
+    const { assets, files } = documentPackage();
+    const text = JSON.stringify({ ...head, graph: doc.graph, assets });
+    if (app?.savePackage) return app.savePackage(`${name}.canopy`, text, files);
+    download(`${name}.zip`, new Blob([zipStore([{ name: `${name}.canopy`, data: text }, ...files])], { type: 'application/zip' }));
+    return true;
+  }
+  const linked = textures === 'linked' && app;
+  const assets = linked ? Object.fromEntries(Object.entries(doc.assets || {}).map(([id, a]) => [id, a.path ? { name: a.name, path: a.path } : a])) : doc.assets;
+  const text = JSON.stringify({ ...head, graph: doc.graph, assets });
+  if (app?.saveAs) return app.saveAs(`${name}.canopy`, text);
+  download(`${name}.canopy`, new Blob([text], { type: 'application/json' }));
+  return true;
 }
+
+// Where a picked picture lives on this computer (PC app only), so a file can point at it instead of packing it.
+export const pathOf = (file) => { try { return window.canopyApp?.pathOf?.(file) || undefined; } catch { return undefined; } };
 
 // The document with its pictures moved out into files: assets keep their name and point at textures/<file>.
 export function documentPackage() {
@@ -41,12 +59,12 @@ export function documentPackage() {
     files.push({ name: file, data: m[2] ? Uint8Array.from(atob(m[3]), (c) => c.charCodeAt(0)) : new TextEncoder().encode(decodeURIComponent(m[3])) });
     assets[id] = { name: a.name, file, type: m[1] };
   }
-  return { text: JSON.stringify({ app: 'canopy', version: 1, name: doc.name, graph: doc.graph, assets }), files };
+  return { text: JSON.stringify({ app: 'canopy', version: 1, name: doc.name, graph: doc.graph, assets }), assets, files };
 }
 
 // A picked file as a document: a .canopy, or a .zip made by Save with textures beside it (pictures packed back in).
 export async function readDocumentFile(f) {
-  if (!/\.zip$/i.test(f.name)) return parseDocument(await f.text());
+  if (!/\.zip$/i.test(f.name)) return linkPictures({ ...parseDocument(await f.text()), __dir: (pathOf(f) || '').replace(/[\\/][^\\/]*$/, '') });
   const entries = await unzip(await f.arrayBuffer());
   const main = entries.find((e) => /\.canopy$/i.test(e.name));
   if (!main) throw new Error('That zip has no .canopy file in it.');
@@ -59,6 +77,24 @@ export async function readDocumentFile(f) {
     a.url = `data:${a.type || 'image/png'};base64,${btoa(bin)}`;
     delete a.file; delete a.type;
   }
+  return d;
+}
+
+// A file the PC app was asked to open (double-clicked in Explorer): its text and folder.
+export const readDocumentText = (text, dir) => linkPictures({ ...parseDocument(text), __dir: dir });
+
+// Pictures a file points at (saved "where they are") are read from there; the PC app can, a browser can't.
+// A textures folder beside a file opened in the PC app is read the same way.
+async function linkPictures(d) {
+  const app = window.canopyApp;
+  let missing = 0;
+  for (const a of Object.values(d.assets || {})) {
+    if (a?.url || !(a?.path || a?.file)) continue;
+    const url = app?.readImage ? await app.readImage(a.path || a.file, d.__dir).catch(() => null) : null;
+    if (url) a.url = url; else missing++;
+  }
+  delete d.__dir;
+  if (missing) d.missingPictures = missing;
   return d;
 }
 

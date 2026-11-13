@@ -5,14 +5,14 @@
 // radius, and a normal map from that height. The Spline can take the scan's thickness along its length, and the
 // maps become its bark material, laid once around and once along.
 import * as THREE from 'three';
-import { doc, commit, changed, addNode, select } from './doc.js';
+import { doc, commit, changed, primary, on } from './doc.js';
 import { el, numberField, checkField, selectField } from './fields.js';
 import { floatPanel } from './floatpanel.js';
 import { newMaterial } from '../graph/materials.js';
 import { dilate } from '../leaf/imgops.js';
 import { zipStore } from './zip.js';
 import { download, safeName } from './io.js';
-import { lineFrames, cylCoords, fitRadius, unwrapSize, heightToNormal, scanCenterline } from '../engine/unwrap.js';
+import { lineFrames, cylCoords, fitRadius, unwrapSize, heightToNormal, tileAlong } from '../engine/unwrap.js';
 
 const BINS = 24;
 
@@ -30,6 +30,19 @@ function splinePts(id) {
   return pts.length >= 6 ? new Float32Array(pts) : null;
 }
 
+// The average thickness (radius) of the spline's own tube along its first line: the surface the maps go on.
+function tubeRadius(id) {
+  const L = doc.result?.lines; if (!L?.radius) return 0;
+  let first = null; let sum = 0; let n = 0;
+  for (let k = 0; k < L.owner.length; k++) {
+    if (L.nodeIds[L.owner[k]] !== id) continue;
+    if (first === null) first = L.lineId[k];
+    if (L.lineId[k] !== first) break;
+    if (L.radius[k] > 0) { sum += L.radius[k]; n++; }
+  }
+  return n ? sum / n : 0;
+}
+
 const scanMesh = (view, id) => view.meshes.map((m) => m.userData.src).find((s) => s?.nodeId === id && s.position?.length);
 
 function toImage(buf, W, H) {
@@ -45,8 +58,8 @@ function dataUrl(img) {
 }
 
 export function makeScanBake({ view, toast }) {
-  const o = { scan: '', spline: '', width: 1024, pow2: false, depth: 4, strength: 2, flipV: false, fit: true };
-  let panel = null; let info = null; let listed = ''; let fitPending = false; let measureInfo = null;
+  const o = { scan: '', spline: '', width: 1024, pow2: false, depth: 4, strength: 2, flipV: false, fit: false, tile: false, tileBand: 15 };
+  let panel = null; let info = null; let listed = ''; let measureInfo = null;
   const nodeList = () => doc.graph.nodes.filter((n) => n.type === 'Mesh' || n.type === 'Spline').map((n) => n.id + n.name).join('|');
 
   function measure() {
@@ -55,7 +68,9 @@ export function makeScanBake({ view, toast }) {
     const F = lineFrames(P);
     const C = cylCoords(s.position, P, F);
     const fit = fitRadius(C, BINS);
-    return { s, P, F, C, fit, H: unwrapSize(o.width, F.L, fit.mean, o.pow2) };
+    // The size follows the Spline's own tube, which the maps go on; the scan's thickness until it has one.
+    const tube = tubeRadius(o.spline);
+    return { s, P, F, C, fit, tube, H: unwrapSize(o.width, F.L, tube || fit.mean, o.pow2) };
   }
 
   async function bake(m) {
@@ -117,6 +132,7 @@ export function makeScanBake({ view, toast }) {
     }
     // Holes where the scan doesn't reach are filled from around them; then the maps are solid.
     for (const k of ['color', 'height']) { out[k] = dilate(out[k], 128); for (let i = 3; i < out[k].data.length; i += 4) out[k].data[i] = 255; }
+    if (o.tile) for (const k of ['color', 'height']) out[k] = tileAlong(out[k], o.tileBand / 100);
     out.normal = heightToNormal(out.height, o.strength);
     return out;
   }
@@ -126,19 +142,6 @@ export function makeScanBake({ view, toast }) {
     const max = Math.max(...m.fit.r);
     n.params.radius = Math.round(max * 100) / 100;
     n.params.curves = { ...n.params.curves, radius: { pts: [...m.fit.r].map((r, i) => [i / (BINS - 1), Math.round((r / max) * 1000) / 1000, 's']) } };
-  }
-
-  // A new Spline up the middle of the scan, named after it; its thickness follows the scan once it has built.
-  function fitSpline() {
-    const scan = doc.graph.nodes.find((n) => n.id === o.scan);
-    const s = scanMesh(view, o.scan);
-    const pts = s && scanCenterline(s.position);
-    if (!pts) { toast('Import the scan first (Import mesh), and let it show in the view.', 5000); return; }
-    const n = addNode('Spline', (scan?.x ?? 0) + 260, scan?.y ?? 0, { strokes: [{ pts }], radius: 10 });
-    n.name = `${scan?.name?.replace(/\.\w+$/, '') || 'Scan'} trunk`;
-    o.spline = n.id; fitPending = true;
-    select([n.id]); changed({ layout: true }); commit(); draw();
-    toast('Made a Spline up the middle of the scan. Its thickness follows the scan.');
   }
 
   async function run(apply) {
@@ -170,22 +173,20 @@ export function makeScanBake({ view, toast }) {
     const scans = doc.graph.nodes.filter((n) => n.type === 'Mesh');
     const splines = doc.graph.nodes.filter((n) => n.type === 'Spline');
     if (!scans.some((n) => n.id === o.scan)) o.scan = scans.find((n) => n.params.shape === 'imported')?.id || scans[0]?.id || '';
+    if (primary()?.type === 'Spline') o.spline = primary().id;
     if (!splines.some((n) => n.id === o.spline)) o.spline = splines[0]?.id || '';
     info = el('p', 'hint');
     const refresh = measureInfo = () => {
       const m = measure();
-      info.textContent = m ? `Unwrapped size ${o.width} × ${m.H} (1 : ${(m.H / o.width).toFixed(2)}): ${Math.round(m.F.L)} cm long, about ${Math.round(m.fit.mean * 10) / 10} cm thick on average.` : 'Pick the scan, then Fit a Spline to the scan (or pick a Spline running up inside it).';
+      const cm = (v) => Math.round(v * 10) / 10;
+      info.textContent = m ? `Map size ${o.width} × ${m.H} (1 : ${(m.H / o.width).toFixed(2)}) for the Spline's tube: ${Math.round(m.F.L)} cm long, ${cm(m.tube || m.fit.mean)} cm thick${m.tube ? ` (the scan: ${cm(m.fit.mean)} cm)` : ''}.` : 'Pick the scan, and a Spline running up inside it (select it, or pick it here).';
     };
     const fitBtn = el('button', 'wide', 'Fit Spline thickness to the scan');
     fitBtn.addEventListener('click', () => { const m = measure(); if (!m) { refresh(); return; } fitThickness(m); changed({ layout: true }); commit(); toast('The Spline now follows the scan\'s thickness.'); });
-    const fitLine = el('button', 'wide', 'Fit a Spline to the scan');
-    fitLine.title = 'Makes a new Spline running up the middle of the scan, with the scan’s thickness along it';
-    fitLine.addEventListener('click', fitSpline);
     const go = el('button', 'wide primary', 'Bake and apply to the Spline'); go.addEventListener('click', () => run(true));
     const save = el('button', 'wide', 'Bake and save the maps'); save.addEventListener('click', () => run(false));
     panel.body.replaceChildren(
       selectField('Scan (Mesh)', o.scan, scans.map((n) => [n.id, n.name]), (v) => { o.scan = v; refresh(); }),
-      fitLine,
       selectField('Spline', o.spline, splines.map((n) => [n.id, n.name]), (v) => { o.spline = v; refresh(); }),
       selectField('Width', String(o.width), [256, 512, 1024, 2048, 4096].map((w) => [String(w), `${w} px`]), (v) => { o.width = +v; refresh(); }),
       checkField('Height to the nearest power of two', o.pow2, (v) => { o.pow2 = v; refresh(); }),
@@ -193,11 +194,16 @@ export function makeScanBake({ view, toast }) {
       numberField('Depth range', o.depth, { min: 0.1, max: 50, unit: 'cm' }, (v) => { o.depth = v; }),
       numberField('Normal strength', o.strength, { min: 0, max: 10 }, (v) => { o.strength = v; }),
       checkField('Flip the scan texture V', o.flipV, (v) => { o.flipV = v; }),
-      checkField('Fit thickness when applying', o.fit, (v) => { o.fit = v; }),
+      checkField('Tileable along the length', o.tile, (v) => { o.tile = v; draw(); }),
+      ...(o.tile ? [numberField('Blend band', o.tileBand, { min: 2, max: 45, unit: '%' }, (v) => { o.tileBand = v; })] : []),
+      checkField('Fit the Spline’s thickness to the scan when applying', o.fit, (v) => { o.fit = v; }),
       fitBtn, go, save,
     );
     refresh();
   }
+
+  // Selecting a Spline (in the graph or the 3D view) picks it here.
+  on('selection', () => { const n = primary(); if (panel?.isOpen() && n?.type === 'Spline' && n.id !== o.spline) draw(); });
 
   return {
     open() {
@@ -207,7 +213,6 @@ export function makeScanBake({ view, toast }) {
     },
     // Meshes imported or Splines added while the panel is open show up in its lists.
     refresh() {
-      if (fitPending) { const m = measure(); if (m) { fitPending = false; fitThickness(m); changed({ layout: true }); commit(); } }
       if (panel?.isOpen()) { if (nodeList() !== listed) draw(); else measureInfo?.(); }
     },
   };

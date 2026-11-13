@@ -362,6 +362,7 @@ export class Evaluator {
     for (const sp of spawns) {
       if (this.lineCount >= this.maxLines || this.segs >= this.maxSegs) { this.warnings.add('Reached the size limit: raise it in Preferences or lower the density.'); break; }
       const nextId = this.lineIdFor(node, sp.parent);
+      if (sp.hide) continue;
       if (rate < 1 && hash(seed, nextId, 11) > rate) continue;
       c.line = null; c.parentLine = sp.parent || null; c.t = 0; c.lineId = nextId; c.level = sp.level || 0; c.pos = sp.pos || 0; c.chainPos = 0;
       c.angleDiv = sp.angleDiv || 0; c.angleBend = sp.angleBend || 0; c.offset = sp.offset || 0;

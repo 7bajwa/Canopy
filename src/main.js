@@ -29,7 +29,7 @@ import { makeLife } from './app/lifeui.js';
 import { applyTheme, themeOf } from './app/themes.js';
 import { WIND_PRESETS } from './graph/defs-unified.js';
 import { dockAt } from './app/dock.js';
-import { readSample, saveDocument, readDocumentFile, saveNodes, parseDocument, pickFile, readDataUrl, importMesh, downloadImage, autosave, loadAutosave, documentText, downloadText, safeName, storeBackup } from './app/io.js';
+import { readSample, readDocumentText, pathOf, saveDocument, readDocumentFile, saveNodes, parseDocument, pickFile, readDataUrl, importMesh, downloadImage, autosave, loadAutosave, documentText, downloadText, safeName, storeBackup } from './app/io.js';
 import { makeBackups } from './app/backup.js';
 import { setUnits } from './app/units.js';
 
@@ -404,12 +404,14 @@ const ui = {
   },
   openMaterials: (id) => matEditor.open(id),
   modalOpen: () => atlas.isOpen() || !settingsEl.hidden || matEditor.isOpen() || packer.isOpen(),
-  save: () => saveDocument(prefs.texturesInFile),
+  save: () => saveFile(),
   cycleLayout: () => setLayout(LAYOUTS[(LAYOUTS.indexOf(prefs.layout) + 1) % LAYOUTS.length]),
   setMode,
 };
 
 const input = attachInput(stage, graph, view, ui);
+// The bar sits on the stage, which takes the pointer for the views; its buttons keep their own presses.
+for (const ev of ['pointerdown', 'pointerup', 'pointermove', 'wheel', 'contextmenu']) $('#xfbar').addEventListener(ev, (e) => e.stopPropagation());
 for (const b of document.querySelectorAll('[data-xf-scope]')) b.addEventListener('click', () => { xfGizmo.setScope(b.dataset.xfScope); for (const o of document.querySelectorAll('[data-xf-scope]')) o.setAttribute('aria-pressed', o === b); });
 document.querySelector('[data-xf-reset]')?.addEventListener('click', () => { if (!xfGizmo.reset()) toast('Nothing to reset: the picked entities have no edit for this tool.'); });
 const setXfMode = (m) => { xfGizmo.setMode(m); for (const o of document.querySelectorAll('[data-xf]')) o.setAttribute('aria-pressed', o.dataset.xf === m); };
@@ -424,7 +426,7 @@ window.canopy = canopy;
 
 async function addImage(file) {
   const id = `img:${Date.now().toString(36)}`;
-  doc.assets[id] = { name: file.name, url: await readDataUrl(file) };
+  doc.assets[id] = { name: file.name, url: await readDataUrl(file), path: pathOf(file) };
   return id;
 }
 
@@ -880,13 +882,18 @@ const okToReplace = () => !hasEdits() || confirm('Replace the current plant? You
 // The plant is kept through an update (it is saved automatically); only the Undo history goes.
 const okToLeave = () => !hasEdits() || confirm('Canopy restarts to update. Your plant is kept, but Undo can’t go back past this. Go ahead?');
 const library = makeLibrary({ openSample: (s) => openSample(s), toast: (m, ms) => toast(m, ms) });
-// Ctrl+Shift+D shows the Developer settings (AI control), kept out of sight until the library is ready.
+const held = new Set();
+window.addEventListener('keyup', (e) => held.delete(e.key.toLowerCase()), true);
+window.addEventListener('blur', () => held.clear());
 window.addEventListener('keydown', (e) => {
-  if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.key.toLowerCase() !== 'd') return;
+  const k = e.key.toLowerCase();
+  const all = e.ctrlKey && e.shiftKey && e.altKey;
+  if (k !== 'enter') { held.add(k); if (all && k === 'd') { e.preventDefault(); e.stopPropagation(); } return; }
+  if (!all || !held.has('d')) return;
   e.preventDefault(); e.stopPropagation();
   setPref('devMode', !prefs.devMode);
   if (!prefs.devMode && prefs.aiBridge) setPref('aiBridge', false);
-  toast(prefs.devMode ? 'Developer settings are on: Settings, last tab.' : 'Developer settings are hidden.');
+  toast(prefs.devMode ? 'Developer settings on.' : 'Developer settings off.');
 }, true);
 document.addEventListener('canopy:check-update', () => checkForUpdate({ manual: true, toast, okToLeave }));
 
@@ -918,8 +925,21 @@ async function openFile() {
   try {
     const d = await readDocumentFile(f);
     await openGraph(d.graph || { nodes: d.nodes, links: d.links, groups: [], settings: {} }, d.name || f.name.replace(/\.\w+$/, ''), { ...doc.assets, ...d.assets });
+    missingPictures(d);
   } catch (e) { toast(e.message, 5000); }
 }
+const missingPictures = (d) => { if (d.missingPictures) toast(`${d.missingPictures} texture${d.missingPictures > 1 ? 's were' : ' was'} not found where the file says. Load them again in the Material editor.`, 7000); };
+// Saving keeps a small picture of the plant in the file.
+const saveFile = () => saveDocument(prefs.texturesInFile, view.meshes.length ? renderer.image({ thumb: true }) : null);
+// The PC app hands over a .canopy double-clicked in Explorer.
+window.canopyApp?.onOpenFile?.(async ({ name, text, dir }) => {
+  if (!okToReplace()) return;
+  try {
+    const d = await readDocumentText(text, dir);
+    await openGraph(d.graph || { nodes: d.nodes, links: d.links, groups: [], settings: {} }, d.name || name.replace(/\.\w+$/, ''), d.assets || {});
+    missingPictures(d);
+  } catch (e) { toast(e.message, 5000); }
+});
 
 async function importNodes() {
   const f = await pickFile('.canopy,application/json');
@@ -968,7 +988,7 @@ const actions = {
     { label: 'Add nodes from a file…', fn: importNodes },
     { label: 'Library…', fn: () => library.show() },
   ]),
-  save: () => saveDocument(prefs.texturesInFile),
+  save: () => saveFile(),
   import: importMeshFile,
   backup() {
     if (backups.running()) { backups.stop(); press('backup', false); toast('Backups are off.'); return; }

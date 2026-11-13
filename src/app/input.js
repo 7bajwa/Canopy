@@ -77,6 +77,11 @@ export function attachInput(stage, graph, view, ui) {
 
   function startLeft(p, e, finger) {
     const hit = graph.hit(p.x, p.y);
+    // The entity editor: a drag anywhere in the 3D view (not on a node) draws a box that picks entities.
+    if (ui.gizmo?.on && !finger && !hit?.node && state.layout !== 'graph' && inRect(view.rect, p)) {
+      state.gesture = { kind: 'tree-tap', last: p, start: p, moved: false };
+      return;
+    }
     const showGraph = state.layout !== 'tree' && (state.layout !== 'split' || !inRect(view.rect, p));
     let onTree = state.layout !== 'graph' && !e.shiftKey && (state.layout === 'tree' || state.layout === 'split' ? inRect(view.rect, p) : view.isOnTree(p.x, p.y));
     if (state.layout === 'overlay' && state.focus !== 'auto') onTree = state.focus === 'tree';

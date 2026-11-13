@@ -21,6 +21,8 @@ test('Age, Season and Health change the plant in the expected direction', () => 
   const young = run({ age: 0.4 });
   assert.ok(young.top < base.top * 0.8, `younger is shorter: ${young.top} vs ${base.top}`);
   assert.ok(young.leaf < base.leaf, 'younger has fewer leaves');
+  const seedling = run({ age: 0.15 });
+  assert.ok(seedling.leaf > 0, 'a seedling has some leaves');
   const winter = run({ season: 0.82 });
   assert.equal(winter.leaf, 0, 'bare in winter');
   assert.ok(winter.bark > 0, 'branches stay');

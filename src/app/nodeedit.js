@@ -6,7 +6,7 @@ import { curveEditor } from './curveedit.js';
 import { openColor } from './colorpop.js';
 import { openImage } from './imageview.js';
 import { textureChoices, atlasChoices, hasAlpha, textureSource } from './textures.js';
-import { readDataUrl, pickFile, importMesh } from './io.js';
+import { readDataUrl, pickFile, importMesh, pathOf } from './io.js';
 import { newMaterial } from '../graph/materials.js';
 import { detect } from './atlas.js';
 import { showLength, parseLength } from './units.js';
@@ -141,7 +141,7 @@ export function makeEditors(ui) {
         const f = await pickFile('image/*');
         if (!f) return;
         const id = `img:${Date.now().toString(36)}`;
-        doc.assets[id] = { name: f.name, url: await readDataUrl(f) };
+        doc.assets[id] = { name: f.name, url: await readDataUrl(f), path: pathOf(f) };
         setRowValue(node, owner, param.k, id);
         // A diffuse image that brings its own alpha is its opacity too.
         if (param.k === 'texture' && !owner.opacityMap && await hasAlpha(id, doc.assets)) {

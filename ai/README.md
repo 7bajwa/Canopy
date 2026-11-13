@@ -1,7 +1,6 @@
 # Letting an AI assistant build plants in Canopy
 
-1. Open the Canopy PC app, press **Ctrl+Shift+D** to show the Developer settings, and turn on **Settings → Developer →
-   Let an AI assistant build plants here**.
+1. Open the Canopy PC app and turn on **Settings → Developer → Let an AI assistant build plants here**.
    The app then listens on this computer only (127.0.0.1, port 47821) and writes a fresh access token to its
    data folder (`%APPDATA%\Canopy\ai-token.txt` on Windows). Turning the setting off closes it and deletes the token.
 2. Register the MCP server with your MCP client. A typical client configuration:
