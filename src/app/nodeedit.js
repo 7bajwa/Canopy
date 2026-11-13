@@ -35,7 +35,8 @@ function cutThumb(m, c, on, fn) {
 }
 
 // These stay out of the stack: three need clicks in the 3D view, and wind now lives on its own tab.
-export const splineMods = () => Object.values(NODE_TYPES).filter((d) => d.type.startsWith('Dir_') && !d.tool && d.type !== 'Dir_Wind');
+// Retired ones (covered by another) stay working in old files but aren't offered.
+export const splineMods = () => Object.values(NODE_TYPES).filter((d) => d.type.startsWith('Dir_') && !d.tool && !d.retired && d.type !== 'Dir_Wind');
 
 export function modChoices(set) {
   if (set === 'spline') return splineMods().map((d) => ({ type: d.type, title: d.title, desc: d.desc }));

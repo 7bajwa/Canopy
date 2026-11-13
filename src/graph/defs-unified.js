@@ -10,6 +10,7 @@ const nb = (k, l, d, o = {}) => num(k, l, d, { sock: false, ...o });
 
 export const TABS = {
   spline: { label: 'Spline', text: 'The line itself: length, segments and its modifiers.' },
+  growth: { label: 'Growth', text: 'Let it grow itself into a whole tree, year by year, by light, shadow and gravity: one node for a birch, an oak or a pine.' },
   place: { label: 'Placement', text: 'Where lines start: from a point, along a line, in a ring, as an urchin (a ball of lines), or on the parent. Each entity, the tip and the transform open from their headings.' },
   mesh: { label: 'Mesh', text: 'What wraps the line: a tube, leaf blades or cutout leaves.' },
   shape: { label: 'Mesh', text: 'The shape: sphere, rectangle, cone, disk or an imported file, with its transform and modifiers.' },
@@ -133,7 +134,7 @@ const P_NOT_ATTACHED = ['point', 'line', 'ring', 'urchin'];
 
 // How lines leave wherever they start. Shared by both nodes.
 const placement = (o = {}) => tag('place', 'place', [
-  en('place', 'Type', 'point', ['point', 'line', 'ring', 'urchin', 'spline', 'mesh', 'sprouts'], { hint: 'Connecting a parent picks Spline or Mesh for you. Point, Line, Ring and Urchin then start at the tip of each parent line.' }),
+  en('place', 'Type', 'point', ['point', 'line', 'ring', 'grid', 'urchin', 'spline', 'mesh', 'sprouts'], { hint: 'Connecting a parent picks Spline or Mesh for you. Point, Line, Ring, Grid and Urchin then start at the tip of each parent line.' }),
   nv('count', 'Count', o.count ?? 1, { min: 0, step: 1, int: true, when: { place: [...P_NOT_ATTACHED, 'mesh'] }, sock: true }),
   // Line
   { k: 'lineDir', l: 'Direction', t: 'vec', d: [1, 0, 0], when: { place: 'line' } },
@@ -141,6 +142,13 @@ const placement = (o = {}) => tag('place', 'place', [
   // Ring
   nv('ringRadius', 'Radius', 100, { unit: 'cm', min: 0, when: { place: 'ring' } }),
   en('ringFill', 'Placement', 'edge', ['edge', 'inside'], { when: { place: 'ring' }, hint: 'Edge sits on the circle; Inside fills it. On Inside, curves run from the center to the edge.' }),
+  // Grid: rows and columns on the ground plane (an orchard, a hedge, a test layout)
+  int('gridX', 'Columns', 4, { min: 1, max: 200, sock: false, when: { place: 'grid' } }),
+  int('gridZ', 'Rows', 4, { min: 1, max: 200, sock: false, when: { place: 'grid' } }),
+  nb('gridStep', 'Spacing', 100, { unit: 'cm', min: 0.01, when: { place: 'grid' } }),
+  nb('gridStepZ', 'Row spacing', 0, { unit: 'cm', min: 0, when: { place: 'grid' }, hint: '0 uses the same as Spacing.' }),
+  nb('gridJitter', 'Jitter %', 0, { min: 0, max: 100, when: { place: 'grid' }, hint: 'Moves each one off its spot by up to this share of the spacing.' }),
+  bool('gridStagger', 'Stagger rows', false, { when: { place: 'grid' }, hint: 'Shifts every other row by half a spacing, like bricks.' }),
   // Urchin: lines spread over a ball, like a sea urchin's spines
   nv('sproutRadius', 'Radius', 50, { unit: 'cm', min: 0, when: { place: 'urchin' } }),
   nv('sproutHeight', 'Height', 100, { unit: 'cm', min: 0, when: { place: 'urchin' } }),
@@ -158,6 +166,9 @@ const placement = (o = {}) => tag('place', 'place', [
   int('whorl', 'Per whorl', 3, { min: 1, max: 24, sock: false, when: { place: 'spline', pattern: 'whorl' } }),
   int('levels', 'Iterations', 1, { min: 1, max: 5, sock: false, when: { place: 'spline' } }),
   // Mesh
+  en('meshOn', 'On the mesh', 'random', ['random', 'faces', 'vertices', 'layers'], { when: { place: 'mesh' }, hint: 'Random spreads them over the surface; Faces puts one on each face, Vertices one on each point; Layers lays rows around it from the bottom up, like roof tiles.' }),
+  int('layers', 'Layers', 8, { min: 1, max: 200, sock: false, when: { place: 'mesh', meshOn: 'layers' } }),
+  bool('layerStagger', 'Stagger layers', true, { when: { place: 'mesh', meshOn: 'layers' }, hint: 'Each row sits between the ones below it, like tiles.' }),
   nb('meshAlign', 'Follow normal %', 100, { min: 0, max: 100, when: { place: 'mesh' }, hint: 'At 100 lines follow the mesh surface. At 0 they point straight up.' }),
   nb('minDist', 'Min distance', 5, { unit: 'cm', min: 0.01, when: { place: 'mesh', spacing: 'even' } }),
   nb('prune', 'Noise prune %', 0, { min: 0, max: 100, when: { place: 'mesh' }, hint: 'Removes patches using soft noise.' }),
@@ -191,6 +202,8 @@ const meshing = tag('mesh', 'mesh', [
   // Switches rather than a list: a tube can carry leaves or cutouts on the same line (a palm frond's stem and
   // blades). Leaf and cutout exclude each other. Stored as 'tube', 'tube+leaf' and so on; 'none' when all are off.
   { k: 'meshType', l: 'Type', t: 'toggles', d: 'tube', opts: ['tube', 'leaf', 'cutout'], excl: ['leaf', 'cutout'], to: null },
+  bool('blendBase', 'Blend into the base', false, { to: 'path', when: { place: 'mesh' }, hint: 'Starts each line a little inside the mesh it grows on; with Crop under branches on that Mesh, its surface opens where the branch enters.' }),
+  nb('lodReduce', 'LOD reduction %', 100, { min: 0, max: 100, to: 'path', hint: 'How much this part thins out in the lower LODs an export makes: tubes lose sides and segments, leaves get fewer and larger. 0 keeps it as it is in every LOD.' }),
   // Tube
   section('_tube', 'Tube', { when: { meshType: 'tube' } }),
   { k: 'tubeMaterial', l: 'Tube material', t: 'matref', d: null, to: null, when: { meshType: ['tube+leaf', 'tube+cutout'] }, hint: 'With leaves on the same line, the tube can have its own material (bark); the Material tab is the leaves\' one.' },
@@ -279,6 +292,39 @@ export const WIND_PRESETS = {
   Palm: { windPower: 90, windSpeed: 70, windFlutter: 25, windCurve: { pts: [[0, 0, 's'], [0.2, 0.05, 's'], [0.7, 0.45, 's'], [1, 1, 's']] } },
 };
 
+// Growth (engine/growth.js): the settings of the simulation, shown on the Growth tab.
+const G = { when: { growOn: true } };
+const growth = tag('growth', 'path', [
+  bool('growOn', 'Grow by itself', false, { hint: 'Grows a whole tree from each start, year by year: buds race for light, shaded branches drop off, gravity and light steer them. Leaves and other children grow on every branch it makes.' }),
+  { k: '_growPreset', l: 'Species…', t: 'action', act: 'growpreset', d: null, to: null, ...G },
+  section('_growGeo', 'Geometry', { ...G }),
+  int('growYears', 'Years', 18, { min: 1, max: 80, sock: false, ...G, hint: 'How many seasons it grows.' }),
+  nb('internode', 'Internode length', 30, { unit: 'cm', min: 1, ...G, hint: 'One year’s step between buds; also the size of a light cell.' }),
+  nb('budRadius', 'Twig thickness', 0.5, { unit: 'cm', min: 0.01, ...G, hint: 'The thickness at the tips; everything below is as thick as what it carries.' }),
+  nb('pipeExp', 'Thickening', 2.5, { min: 1.5, max: 4, ...G, hint: 'How forks add up: 2 thickens fast, 3 stays slender.' }),
+  nb('branchAngle', 'Angle with parent', 45, { unit: '°', min: 0, max: 120, ...G }),
+  nb('phyllotaxis', 'Phyllotaxis angle', 137.5, { unit: '°', min: 0, max: 360, ...G, hint: '137.5 spirals, 180 alternates, 90 pairs.' }),
+  int('budsPerNode', 'Buds per node', 1, { min: 1, max: 8, sock: false, ...G, hint: '2 for opposite pairs (ash, maple), 4–6 for whorls (pine).' }),
+  nb('angNoise', 'Angular noise', 0.2, { min: 0, max: 2, ...G }),
+  nb('growSpeed', 'Growth speed', 2, { min: 0.1, max: 6, ...G, hint: 'How much a year’s light turns into new shoots.' }),
+  nb('apical', 'Apical', 0.52, { min: 0.3, max: 0.7, ...G, hint: 'Above 0.5 the main stem wins (a cone, like a spruce); below, the sides win (a dome, like an oak). Very sensitive.' }),
+  nb('decay', 'Decay', 0.9, { min: 0, max: 1, ...G, hint: 'How much less each side branch gets than the axis it comes from.' }),
+  section('_growShade', 'Shadowing', { ...G }),
+  nb('shadowStrength', 'Strength', 1, { min: 0, max: 4, ...G }),
+  int('shadowSize', 'Shadow size', 6, { min: 1, max: 12, sock: false, ...G, hint: 'How many cells down each bud’s shadow reaches.' }),
+  nb('lightInfluence', 'Light influence', 1, { min: 0, max: 1, ...G }),
+  nb('shedding', 'Shedding threshold', 0.25, { min: 0, max: 1, ...G, hint: 'Side branches with less light than this for their size drop off: higher gives a taller bare trunk.' }),
+  section('_growTrop', 'Tropism', { ...G }),
+  nb('verticalTrunk', 'Vertical trunk', 0.8, { min: 0, max: 1, ...G }),
+  nb('gravAngle', 'Gravitropism angle', 70, { unit: '°', min: 0, max: 180, ...G, hint: 'The angle from straight up that branches settle at: 0 up, 90 level, above 90 weeping.' }),
+  nb('gravInfluence', 'Gravitropism influence', 0.25, { min: 0, max: 2, ...G }),
+  nb('photoInfluence', 'Phototropism influence', 0.4, { min: 0, max: 2, ...G, hint: 'How strongly shoots turn toward the light.' }),
+  section('_growBuds', 'Bud placement', { ...G }),
+  nb('favorUp', 'Favor up', 0, { min: -1, max: 1, ...G }),
+  nb('favorSides', 'Favor sides', 0, { min: -1, max: 1, ...G }),
+  int('growMax', 'Max nodes', 6000, { min: 100, max: 200000, sock: false, ...G, hint: 'A cap on the size: each node is one internode of branch.' }),
+]);
+
 const wind = (leaves) => tag('wind', 'path', [
   { k: '_windPreset', l: 'Preset…', t: 'action', act: 'windpreset', d: null, to: null },
   nv('windPower', 'Sway power', 100, { min: 0, along: 'pos' }),
@@ -291,7 +337,7 @@ const wind = (leaves) => tag('wind', 'path', [
 
 export const unifiedDefs = [
   {
-    type: 'Spline', title: 'Spline', cat: 'plant', tabs: ['spline', 'place', 'mesh', 'material', 'wind'],
+    type: 'Spline', title: 'Spline', cat: 'plant', tabs: ['spline', 'growth', 'place', 'mesh', 'material', 'wind'],
     desc: 'One complete part of a plant: a line, where it starts, what wraps it, how it looks and how it moves. Connect a parent to grow it from another Spline or Mesh.',
     in: [{ k: 'parent', kind: 'parent', side: 'left', also: ['object'], multi: true, l: 'Parent' }],
     out: [{ k: 'children', kind: 'parent', side: 'right', l: 'Children' }],
@@ -307,6 +353,7 @@ export const unifiedDefs = [
           d: [newMod('noise', 'Dir_Noise', { strength: 0 }, { name: 'Noise' }), newMod('gravity', 'Dir_Vector', { vector: [0, -1, 0], strength: 0 }, { name: 'Gravity' })],
         },
       ]),
+      ...growth,
       ...placement(),
       ...meshing,
       ...material({ uv: true }),
@@ -327,12 +374,14 @@ export const unifiedDefs = [
         en('shape', 'Shape', 'sphere', ['sphere', 'rectangle', 'cone', 'disk', 'imported']),
         { k: 'obj', l: 'Mesh file', t: 'obj', d: null, when: { shape: 'imported' } },
         nb('radius', 'Radius', 50, { unit: 'cm', min: 0.01, when: { shape: ['sphere', 'cone', 'disk'] } }),
+        nv('profile', 'Profile', 1, { min: 0, when: { shape: 'sphere' }, hint: 'The width at each height, bottom to top: its curve shapes the ball into an egg, a pear, a gourd or a bud.' }),
         nb('topRadius', 'Top radius', 0, { unit: 'cm', min: 0, when: { shape: 'cone' } }),
         nb('height', 'Height', 100, { unit: 'cm', min: 0.01, when: { shape: 'cone' } }),
         { k: 'size', l: 'Size', t: 'vec', d: [100, 100, 100], unit: 'cm', when: { shape: 'rectangle' } },
         nb('bevel', 'Bevel', 5, { unit: 'cm', min: 0, when: { shape: 'rectangle' } }),
         int('segments', 'Segments', 16, { min: 3, max: 64, sock: false, when: { shape: ['sphere', 'rectangle', 'cone', 'disk'] } }),
         bool('show', 'Show mesh', true, { hint: 'Off keeps it as something to grow on, without drawing it.' }),
+        bool('cropUnder', 'Crop under branches', false, { hint: 'Cuts this mesh away where Splines with "Blend into the base" start on it, so a scanned trunk and the branches grown on it join as one surface.' }),
       ]),
       ...tag('shape', null, [{ k: 'mods', l: 'Modifiers', t: 'mods', set: 'shape', d: [newMod('noise', 'noise', { amp: 0 })] }]),
       ...placement({ transform: false }),

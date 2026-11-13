@@ -157,6 +157,13 @@ function registerFileType() {
   reg('Canopy.Plant', 'Canopy plant');
   reg('Canopy.Plant\\DefaultIcon', `"${exe}",0`);
   reg('Canopy.Plant\\shell\\open\\command', `"${exe}" "%1"`);
+  // Explorer thumbnails: the small picture saved inside each .canopy (native/thumbs, a Rust COM handler).
+  const dll = path.join(__dirname, 'canopy_thumbs.dll');
+  const CLSID = '{84B3F81B-EBD3-400E-8CD2-DFB8F1480510}';
+  reg(`CLSID\\${CLSID}`, 'Canopy Thumbnail Provider');
+  reg(`CLSID\\${CLSID}\\InprocServer32`, dll);
+  require('node:child_process').spawnSync('reg', ['add', `HKCU\\Software\\Classes\\CLSID\\${CLSID}\\InprocServer32`, '/v', 'ThreadingModel', '/d', 'Apartment', '/f'], { windowsHide: true });
+  reg('.canopy\\ShellEx\\{e357fccd-a995-4576-b01f-234630154e96}', CLSID);
 }
 
 // A file Canopy was started with, or handed while it is already open, goes to the page once it is ready for it.

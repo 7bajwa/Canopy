@@ -105,6 +105,14 @@ export const pathDefs = [
     ],
   },
   {
+    // The engine side of a Spline with Growth on (engine/growth.js); its settings come from the Spline.
+    type: 'GrowthPath', title: 'Growth', cat: 'path', hidden: true,
+    desc: 'Grows a whole tree from each start point, year by year, by light, shadow and gravity.',
+    in: [{ k: 'in', kind: 'spawn', side: 'top', multi: true }],
+    out: pathOuts, values: lineOuts,
+    params: [...wire('#35d07f')],
+  },
+  {
     type: 'SpaceColonization', title: 'Space colonization', cat: 'path',
     desc: 'Grows a branching skeleton toward attractor points supplied by clouds, consuming them as it reaches them.',
     in: [

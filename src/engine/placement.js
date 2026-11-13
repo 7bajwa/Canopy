@@ -1,7 +1,8 @@
 // The Placement tab: where each line starts, which way it leaves, and how big it is.
 import { hash, DEG, cross, norm, rotate, perpendicular, add, mul, clamp, mix3, dot, bakeCurve, sampleCurve, ZUP, turnXYZ, shapeXf } from './math.js';
 import { sampleLine, newSample, tOf } from './line.js';
-import { softNoise } from './primitive.js';
+import { softNoise, bakeShape } from './primitive.js';
+import { makeShape } from './shapes.js';
 import { sproutFrames } from './leaves.js';
 
 const GOLDEN = 137.50776 * DEG;
@@ -245,6 +246,34 @@ function meshMode(ev, dn, q, emit, seed, parents) {
   const minCos = Math.cos(clamp(+P.slope, 0, 180) * DEG);
   const even = P.spacing === 'even';
   const cell = Math.max(+P.minDist || 5, 0.01);
+  // Placed points in the order given (faces, vertices, layers), with the same height, slope and prune limits.
+  function fixedPoints(list) {
+    const blo = shape.bounds[0][1]; const bhi = shape.bounds[1][1];
+    const f0 = blo + (bhi - blo) * (+P.heightStart / 100); const f1 = blo + (bhi - blo) * (+P.heightEnd / 100);
+    list.forEach((local, i) => {
+      if (local.p[1] < f0 - 1e-3 || local.p[1] > f1 + 1e-3 || local.n[1] < minCos) return;
+      const line = copies ? copies[i % copies.length] : null;
+      const pt = line ? onCopy(local, line, from) : local;
+      if (prune && softNoise(pt.p[0], pt.p[1], pt.p[2], +P.pruneScale || 50, seed) * 0.5 + 0.5 < prune) return;
+      const axis = norm(mix3([0, 1, 0], norm(pt.n), follow));
+      const k = (seed + i * 31 + 1) | 0;
+      emit({ p: pt.p, axis, radial: rotate(perpendicular(axis), axis, hash(seed, k, 9) * Math.PI * 2), t: bhi > blo ? (local.p[1] - blo) / (bhi - blo) : 0, key: k, line, s: 0 });
+    });
+  }
+  // Faces and vertices need the shape as triangles: a drawn primitive is baked into one.
+  const mode = P.meshOn || 'random';
+  let surf = shape;
+  if ((mode === 'faces' || mode === 'vertices') && !shape.triangles && ol) {
+    const b = bakeShape(ev.nodes.get(ol.from).params);
+    surf = makeShape({ shape: 'imported', obj: { v: b.v, idx: b.idx }, sizeX: 100, pos: [0, 0, 0] });
+  }
+  if (mode === 'faces' || mode === 'vertices') {
+    const pts = mode === 'faces'
+      ? surf.triangles.map((t) => ({ p: [0, 1, 2].map((c) => (t.a[c] + t.b[c] + t.c[c]) / 3), n: t.n }))
+      : surf.vertices.map((p, i) => ({ p, n: vertexNormal(surf.triangles, p, i) }));
+    return fixedPoints(pts);
+  }
+  if (mode === 'layers') return fixedPoints(layerPoints(shape, seed, Math.max(1, Math.round(+P.layers || 8)), countOf(q, ev.ctx, seed, 7), P.layerStagger !== false));
   const grid = new Map();
   let made = 0;
   // Tries more points than asked, so spacing and pruning still reach the count when they can.
@@ -273,6 +302,51 @@ function meshMode(ev, dn, q, emit, seed, parents) {
   }
 }
 
+// A point's normal on a triangle mesh: the average of the faces that touch it.
+function vertexNormal(tris, p) {
+  const n = [0, 0, 0];
+  for (const t of tris) if (t.a === p || t.b === p || t.c === p) { n[0] += t.n[0]; n[1] += t.n[1]; n[2] += t.n[2]; }
+  return Math.hypot(...n) > 1e-9 ? norm(n) : [0, 1, 0];
+}
+
+// Rows around a shape from the bottom up, like roof tiles: each row is a ring of points on the surface at one
+// height, spread evenly around, every other row turned half a step.
+export function layerPoints(shape, seed, layers, count, stagger = true) {
+  const [lo, hi] = [shape.bounds[0][1], shape.bounds[1][1]];
+  const c = [(shape.bounds[0][0] + shape.bounds[1][0]) / 2, 0, (shape.bounds[0][2] + shape.bounds[1][2]) / 2];
+  const per = Math.max(1, Math.round(count / layers));
+  const R = Math.max(shape.bounds[1][0] - shape.bounds[0][0], shape.bounds[1][2] - shape.bounds[0][2]) * 2 + 1;
+  const out = [];
+  for (let l = 0; l < layers; l++) {
+    const y = lo + (hi - lo) * ((l + 0.5) / layers);
+    for (let i = 0; i < per; i++) {
+      const a = ((i + (stagger && l % 2 ? 0.5 : 0)) / per) * Math.PI * 2;
+      // From far outside toward the axis: the closest surface point there.
+      const hit = shape.closest([c[0] + Math.cos(a) * R, y, c[2] + Math.sin(a) * R]);
+      out.push({ p: hit.p, n: hit.n });
+    }
+  }
+  return out;
+}
+
+// Grid: columns and rows on the frame's ground plane, around its start, with optional stagger and jitter.
+function gridMode(ev, dn, q, f, emit, seed) {
+  const P = dn.params;
+  const nx = Math.max(1, Math.round(+P.gridX || 1)); const nz = Math.max(1, Math.round(+P.gridZ || 1));
+  const sx = +P.gridStep || 100; const sz = +P.gridStepZ || sx; const jit = (+P.gridJitter || 0) / 100;
+  for (let r = 0; r < nz; r++) {
+    for (let c = 0; c < nx; c++) {
+      const i = r * nx + c; const key = keyOf(f, i);
+      const shift = P.gridStagger && r % 2 ? 0.5 : 0;
+      const x = (c + shift - (nx - 1) / 2) * sx + (hash(seed, key, 21) - 0.5) * 2 * jit * sx;
+      const z = (r - (nz - 1) / 2) * sz + (hash(seed, key, 22) - 0.5) * 2 * jit * sz;
+      const t = nx * nz > 1 ? i / (nx * nz - 1) : 0;
+      ev.ctx.t = t; ev.ctx.pos = t; ev.ctx.lineId = key;
+      emit({ p: place(f, x, 0, z), axis: f.T, radial: around(f, i * GOLDEN), t, key, line: f.line, s: f.s });
+    }
+  }
+}
+
 function sproutsMode(ev, dn, parents, emit) {
   let found = false;
   for (const line of parents) {
@@ -298,7 +372,7 @@ export function placementSpawns(ev, dn, parents) {
   if (mode === 'mesh') { meshMode(ev, dn, q, emit, seed, parents); return out; }
   if (mode === 'spline') { if (parents) splineMode(ev, dn, q, parents, emit, seed); return out; }
   if (mode === 'sprouts') { if (parents) sproutsMode(ev, dn, parents, emit); return out; }
-  const run = { line: lineMode, ring: ringMode, urchin: urchinMode }[mode] || pointMode;
+  const run = { line: lineMode, ring: ringMode, grid: gridMode, urchin: urchinMode }[mode] || pointMode;
   for (const f of framesOf(dn, parents)) run(ev, dn, q, f, emit, seed);
   return out;
 }

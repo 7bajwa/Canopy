@@ -7,6 +7,7 @@ import { doc, on, loadGraph, resetHistory, regenerate, commit, undo, redo, setAu
 import { NODE_TYPES, socketsOf, kindFits, clone, defaultParams } from './graph/schema.js';
 import { makeApi, startBridge, stopBridge } from './app/aibridge.js';
 import { makeLibrary } from './app/library.js';
+import { makeImpostor } from './app/impostor.js';
 import { checkForUpdate } from './app/updater.js';
 import { GraphView, setTextScale, NODE_W, setGraphPalette } from './app/graphview.js';
 import { Viewport } from './app/viewport.js';
@@ -28,6 +29,7 @@ import { makeScanBake } from './app/scanbake.js';
 import { makeLife } from './app/lifeui.js';
 import { applyTheme, themeOf } from './app/themes.js';
 import { WIND_PRESETS } from './graph/defs-unified.js';
+import { GROWTH_PRESETS } from './engine/growth.js';
 import { dockAt } from './app/dock.js';
 import { readSample, readDocumentText, pathOf, saveDocument, readDocumentFile, saveNodes, parseDocument, pickFile, readDataUrl, importMesh, downloadImage, autosave, loadAutosave, documentText, downloadText, safeName, storeBackup } from './app/io.js';
 import { makeBackups } from './app/backup.js';
@@ -360,6 +362,7 @@ function setLayout(mode) {
 const xfGizmo = new XfGizmo(view);
 const life = makeLife();
 const scanBake = makeScanBake({ view, toast: (m, ms) => toast(m, ms) });
+const impostor = makeImpostor({ view, toast: (m, ms) => toast(m, ms) });
 const renderer = makeRender({ view, prefs, setPref: (k, v) => setPref(k, v), toast: (m) => toast(m), download: (u) => downloadImage(u), hide: () => [xfGizmo.helper] });
 const ui = {
   gizmo: xfGizmo,
@@ -395,6 +398,10 @@ const ui = {
     if (act === 'mateditor') matEditor.open(node.params.material);
     if (act === 'windpreset') {
       menu(p || { x: 200, y: 200 }, Object.entries(WIND_PRESETS).map(([name, v]) => ({ label: name, fn: () => { Object.assign(node.params, structuredClone(v)); changed({ layout: true }); commit(); toast(`Wind set for ${name}.`); } })));
+      return;
+    }
+    if (act === 'growpreset') {
+      menu(p || { x: 200, y: 200 }, Object.entries(GROWTH_PRESETS).map(([name, v]) => ({ label: name, fn: () => { Object.assign(node.params, { growOn: true }, v); changed({ layout: true }); commit(); toast(`Growth set for ${name}. Tune it from here.`); } })));
       return;
     }
     if (act !== 'atlas') return;
@@ -995,6 +1002,22 @@ const actions = {
     backupEl.hidden = false;
   },
   addSpline: () => addFromBar('Spline'),
+  // A Growth tree: a Spline that grows itself (engine/growth.js), with leaves on the young wood.
+  addGrowth: () => {
+    const w = graph.toWorld(stage.getBoundingClientRect().width * 0.25, stage.getBoundingClientRect().height * 0.3);
+    const t = newNode('Spline', w.x, w.y);
+    Object.assign(t.params, GROWTH_PRESETS.Birch, { growOn: true, blendOffset: 0 });
+    t.name = 'Growth tree';
+    const l = newNode('Spline', w.x + NODE_W + 110, w.y);
+    Object.assign(l.params, { place: 'spline', start: 50, end: 100, density: 14, length: 7, meshType: 'leaf', width: 2.2, segMode: 'absolute', segCount: 6, tilt: 50 });
+    l.name = 'Leaves';
+    const bark = newMaterial('Growth bark', { color: '#8a7a68' }); const leaf = newMaterial('Growth leaves', { color: '#4f8a35' });
+    (doc.graph.materials ||= []).push(bark, leaf);
+    t.params.material = bark.id; l.params.material = leaf.id;
+    connect(t.id, 'children', l.id, 'parent');
+    settleNew(t);
+    toast('A Growth tree: pick a species or tune it on its Growth tab.', 5000);
+  },
   materials: () => matEditor.open(primary()?.params?.material),
   cutouts: () => {
     const mats = (doc.graph.materials || []).filter((m) => m.texture);
@@ -1045,6 +1068,7 @@ const actions = {
   render: () => renderer.quick(),
   renderSettings: () => renderer.open(),
   scanBake: () => scanBake.open(),
+  impostor: () => impostor.open(),
   life: () => life.open(),
   undo, redo,
   prefs: () => openSettings(settingsEl, prefs, setPref),

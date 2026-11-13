@@ -85,3 +85,29 @@ Recommended order:
 | Collision | Auto capsules for trunk + level 1 (UCX_ for Unreal) |
 | Root flares / junctions | Buttress modifier + merged junction mesh |
 | Learning curve | Template presets with ~5 sliders |
+
+## Research, November 2026: what artists complain about, and what Canopy can do
+
+| Complaint (SpeedTree, PlantFactory, GrowFX, The Grove, Houdini) | Idea for Canopy | Status |
+|---|---|---|
+| Subscriptions and discontinued tools (PlantFactory ended 2024) | Free, offline, open .canopy format | Done |
+| SpeedTree wind breaks with Nanite (too many UV channels) | Wind in vertex colors or ≤ 2 extra UVs; Nanite-safe USD | Done (layouts, USD) |
+| Wind stretches on instanced foliage | Per-piece pivots (Pivot Painter 2), local-space data | Done |
+| Pivot Painter setup is manual | One-click PP2 textures | Done |
+| LOD export breaks, extra UVs | LOD chain on export, per node LOD reduction | Done (v0.46) |
+| Impostor baking flaky | Built-in octahedral impostor atlas | Done (v0.46) |
+| Output not game-ready (cards, atlas, collision, pivots) | "Game-ready" export preset that does all | Next |
+| Atlas/UV workflow painful | Auto-pack leaf/twig atlases with texel density | Partly (packer) |
+| Leaves lost or exploded on export, no instancing | glTF/USD with real instancing | Done (USD PointInstancer) |
+| Steep learning curve | Species presets, one Growth node, plain tooltips | Done (Growth presets) |
+| Procedural vs hand control | Hand-drawn guides and pruning brushes the Growth sim respects | Next |
+| Unclear asset licensing | State that output belongs to the user | To add to the website |
+| Proprietary shaders clash with engines | Plain PBR plus documented wind data | Done |
+| Repetitive, fake-looking trees | Self-organizing Growth node, N seed variants per export | Growth done; variants next |
+
+### Growth node: still to do
+- Cuts tab: pruning volumes and planes, re-grown around next year.
+- Age curves: any Growth setting changing over the years (willow tips weeping more with age).
+- Obstacles and light from other objects (a Mesh as an obstacle; neighbouring trees shading each other).
+- Leaves only on the youngest N years of wood; leaf lifespan.
+- A worker cache per year, so scrubbing Years doesn't re-simulate from the start.

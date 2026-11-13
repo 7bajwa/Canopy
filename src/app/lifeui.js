@@ -47,6 +47,8 @@ export function makeLife() {
       numberField(`Season · ${seasonName(L.season)}`, L.season, { min: 0, max: 1 }, (v, d) => set('season', v, d)),
       seasons,
       numberField('Health', L.health, { min: 0, max: 1 }, (v, d) => set('health', v, d)),
+      numberField('Fallen leaves', L.fallen, { min: 0, max: 1 }, (v, d) => set('fallen', v, d)),
+      numberField('Snow', L.snow, { min: 0, max: 1 }, (v, d) => set('snow', v, d)),
       el('h4', 'section', 'Growth timing'),
       numberField('Level delay', L.levelDelay, { min: 0, max: 0.4 }, (v, d) => set('levelDelay', v, d)),
       numberField('Base-to-tip delay', L.spread, { min: 0, max: 0.5 }, (v, d) => set('spread', v, d)),

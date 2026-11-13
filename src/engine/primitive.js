@@ -1,5 +1,5 @@
 // Builds the Mesh node's shape as a plain triangle list, with its modifiers and transform applied.
-import { DEG, noise1, applyXf } from './math.js';
+import { DEG, noise1, applyXf, bakeCurve, sampleCurve } from './math.js';
 
 function sphere(R, seg) {
   const v = []; const idx = [];
@@ -195,6 +195,14 @@ export function bakeShape(P) {
   else if (P.shape === 'imported' && P.obj?.v?.length) mesh = { v: [...P.obj.v], idx: [...P.obj.idx], uv: P.obj.uv?.length === (P.obj.v.length / 3) * 2 ? P.obj.uv : null };
   else mesh = sphere(+P.radius || 50, seg);
   const { v, idx } = mesh;
+  // The sphere's Profile: its width at each height, from its curve (bottom 0 to top 1).
+  if ((P.shape || 'sphere') === 'sphere' && (P.curves?.profile || (P.profile ?? 1) !== 1)) {
+    const r = +P.radius || 50; const table = P.curves?.profile ? bakeCurve(P.curves.profile) : null; const k0 = +(P.profile ?? 1);
+    for (let i = 0; i < v.length; i += 3) {
+      const k = k0 * (table ? sampleCurve(table, (v[i + 1] + r) / (2 * r)) : 1);
+      v[i] *= k; v[i + 2] *= k;
+    }
+  }
   let top = 0;
   for (let i = 1; i < v.length; i += 3) top = Math.max(top, Math.abs(v[i]));
   applyMods(v, idx, P.mods, Math.max(top, 1));

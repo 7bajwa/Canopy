@@ -1,14 +1,14 @@
 {
   "name": "canopy-tree-editor",
   "private": true,
-  "version": "0.45.1",
+  "version": "0.46.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "node scripts/make-docs.mjs && node scripts/make-samples.mjs && vite build",
     "test": "node --test",
     "serve:lan": "vite preview --host --port 4173",
-    "pc:build": "vite build && npx --yes @electron/packager@18 . Canopy --platform=win32 --arch=x64 --out=release/.win-tmp --overwrite --electron-version=33.4.11 --icon=build/icon.ico --ignore=\"^/(src|test|scripts|public|android|release|node_modules)\" && node scripts/copy-win.cjs",
+    "pc:build": "vite build && npx --yes @electron/packager@18 . Canopy --platform=win32 --arch=x64 --out=release/.win-tmp --overwrite --electron-version=33.4.11 --icon=build/icon.ico --ignore=\"^/(src|test|scripts|public|android|release|node_modules|native|ai|docs)\" && node scripts/copy-win.cjs",
     "android:setup": "npm i -D @capacitor/cli@7 @capacitor/core@7 @capacitor/android@7 && npx cap add android",
     "android:build": "vite build && npx cap sync android && cd android && .\\gradlew.bat assembleDebug && cd .. && node scripts/copy-apk.cjs",
     "web:build": "node scripts/make-docs.mjs && node scripts/make-samples.mjs && vite build && node scripts/copy-web.cjs",

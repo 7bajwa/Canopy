@@ -97,7 +97,8 @@ export function compsOf(ev, b) {
     const base = comps.color; const L = ev.life;
     comps.color = (line, t, out, out2) => {
       base(line, t, out, out2);
-      if (line.node.params.leafy) { const k = seasonTint(L.season, line.season ?? 0.5, L.health); out[0] *= k[0]; out[1] *= k[1]; out[2] *= k[2]; }
+      if (line.fallen) { const k = seasonTint(0.62, line.season ?? 0.5, 1); out[0] *= k[0] * 0.75; out[1] *= k[1] * 0.4; out[2] *= k[2] * 0.3; }
+      else if (line.node.params.leafy) { const k = seasonTint(L.season, line.season ?? 0.5, L.health); out[0] *= k[0]; out[1] *= k[1]; out[2] *= k[2]; }
       else if (line.withered) { const g = (out[0] + out[1] + out[2]) / 3; out[0] = (out[0] * 0.5 + g * 0.5) * 0.8; out[1] = (out[1] * 0.5 + g * 0.5) * 0.8; out[2] = (out[2] * 0.5 + g * 0.5) * 0.8; }
     };
   }
@@ -252,6 +253,7 @@ function sidesOf(ev, job, line) {
   let sides = Math.round(ev.q(job.node).sides(ct));
   if (P.optimize) sides = Math.round((TWO_PI * line.radii[0]) / (+P.faceSize || 8));
   if (ev.draft) sides = Math.round(sides * 0.6);
+  if (ev.lod) sides = Math.round(sides * ev.lodKeep(line.node));
   return clamp(sides, Math.max(3, Math.round(+P.minSides || 3)), 64);
 }
 

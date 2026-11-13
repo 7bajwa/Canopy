@@ -244,6 +244,18 @@ export const MODIFIERS = {
     });
   },
 
+  // Droop: a cantilever under its own weight. The bend at a point grows with the square of the line still beyond it,
+  // so it arches from the base and the tip hangs; lines longer than Stiffness sag more.
+  Dir_Droop(ev, node, line, q) {
+    const c = ev.setCtx(line, 0);
+    const k = q.strength(c) * (line.length / Math.max(1, q.stiffness(c)));
+    if (!k) return;
+    walk(line, (i, s, t, d, p, seg) => {
+      const rest = Math.max(0, 1 - s / line.length);
+      return turnToward(d, [0, -1, 0], k * rest * rest * (seg / line.length) * 1.5);
+    });
+  },
+
   // Applied at draw time by the viewport; lines keep their shape so it stays cheap.
   Dir_Wind() {},
 

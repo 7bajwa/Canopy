@@ -46,6 +46,10 @@ export const modDefs = [
     num('scaleChaos', 'Variation scale %', 0, { min: 0, max: 100 }),
     num('blend', 'Interpolation value', 0, { min: 0, max: 1 }),
   ], { desc: 'Makes lines follow a drawn profile, blending between two shapes.' }),
+  modifier('Dir_Droop', 'Droop', [
+    num('strength', 'Strength', 1, { min: 0, max: 5, n: 1 }),
+    num('stiffness', 'Stiffness', 300, { unit: 'cm', min: 1, n: 1, hint: 'Longer lines than this sag more, shorter ones less.' }),
+  ], { desc: 'Sags under its own weight: most at the base, where the most line hangs beyond, so long branches and fronds arch over.' }),
   modifier('Dir_HardBend', 'Hard bend', [
     num('position', 'Position %', 50, { min: 0, max: 100, n: 1 }),
     num('posChaos', 'Variation position %', 0, { min: 0, max: 100 }),
@@ -87,12 +91,12 @@ export const modDefs = [
     bool('prevent', 'Prevent penetration', true), num('minDist', 'Min distance', 2, { unit: 'cm' }),
     bool('magnet', 'Magnetic', false), num('magnetDist', 'Magnetic distance', 80, { unit: 'cm' }),
     num('magnetStr', 'Max strength %', 50, { min: 0, max: 100 }),
-  ], { after: true, in: [objectIn], desc: 'Lines bounce off a scene object, or are pulled toward it.' }),
+  ], { retired: 'Collide', after: true, in: [objectIn], desc: 'Lines bounce off a scene object, or are pulled toward it.' }),
   modifier('Dir_PathReact', 'Path reaction', [
     bool('reflect', 'Reflection', true), num('reflectDist', 'Reflection distance', 30, { unit: 'cm', n: 1 }),
     bool('magnet', 'Magnetic', false), num('magnetDist', 'Magnetic distance', 60, { unit: 'cm' }),
     num('magnetStr', 'Max strength %', 40, { min: 0, max: 100 }),
-  ], { after: true, desc: 'Lines of this path push apart or pull together, which stops them crossing.' }),
+  ], { retired: 'Avoid intersections', after: true, desc: 'Lines of this path push apart or pull together, which stops them crossing.' }),
   modifier('Dir_ObjSlice', 'Object slice', [
     num('distance', 'Distance', 0, { unit: 'cm', n: 1 }),
     bool('keepLength', 'No affect length', true),
@@ -142,7 +146,7 @@ export const modDefs = [
   modifier('Dir_OverrideSteps', 'Override steps', [
     num('steps', 'Steps', 20, { unit: 'cm', min: 0.05, n: 1, c: 1 }),
     bool('uniform', 'Uniform steps', true),
-  ], { desc: 'Rebuilds the line with a new segment length.' }),
+  ], { retired: 'Spline segments', desc: 'Rebuilds the line with a new segment length.' }),
   modifier('Dir_Shape', 'Shape', [num('falloff', 'Falloff', 0.3, { min: 0.02, max: 1 }), data('edits', [])],
     { after: true, tool: 'shape', desc: 'Drag a line in the 3D view to reshape it.' }),
 ];

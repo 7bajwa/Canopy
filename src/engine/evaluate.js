@@ -6,6 +6,7 @@ import { makeShape, shapeSize } from './shapes.js';
 import { MODIFIERS } from './modifiers.js';
 import { makeSpawns, drawnLines } from './distribute.js';
 import { growColonization, cloudPoints, unifySkeleton } from './colonize.js';
+import { growthLines } from './growth.js';
 import { buildCylinders, prepareJunctions, MeshBuf, computeRadii, compsOf } from './tube.js';
 import { buildLeaves, buildStandardLeaves, buildInstances } from './leaves.js';
 import { buildMeta } from './meta.js';
@@ -32,6 +33,8 @@ export class Evaluator {
     this.graph = graph;
     this.images = opts.images || null;
     this.draft = !!opts.draft;
+    // Level of detail for exports: 0 full, each level up thins tubes and leaves (see lodKeep).
+    this.lod = Math.max(0, Math.min(3, Math.round(+opts.lod || 0)));
     this.camera = opts.camera || [0, 0, 500];
     const s = graph.settings || {};
     this.seed = s.seed ?? 1;
@@ -325,6 +328,13 @@ export class Evaluator {
 
   // A line's number comes from its node, its parent line and its place among that parent's children, so adding
   // an unrelated node (an imported mesh, a new branch) doesn't reshuffle every other line's randomness.
+  // The share of detail a node keeps at this LOD: 1 at LOD 0, then 0.6, 0.36 and 0.22, softened by its LOD reduction %.
+  lodKeep(node) {
+    if (!this.lod) return 1;
+    const k = Math.max(0, Math.min(100, +(node.params.lodReduce ?? 100))) / 100;
+    return 1 - (1 - 0.6 ** this.lod) * k;
+  }
+
   lineIdFor(node, parent) {
     const key = `${node.id}|${parent ? parent.id : 0}`;
     const n = (this.lineSlots.get(key) || 0) + 1;
@@ -371,21 +381,41 @@ export class Evaluator {
       let L = Math.max(0.1, q.length(c)) * (sp.lengthScale ?? 1);
       if (chaos) L *= 1 - (chaos(c) / 100) * hash(seed, nextId, 12);
       c.length = L;
-      const pts = [sp.p[0], sp.p[1], sp.p[2]];
+      // A leaning trunk standing on the ground starts a little below it, so its whole foot meets the ground
+      // instead of lifting on one side.
+      let p0 = sp.p;
+      // Blend into the base: start inside the surface it grows on, by about its thickness.
+      if (node.params.blendBase) {
+        const sink = (+node.params.radius || 0) * (sp.lengthScale ?? 1) * 1.2;
+        p0 = [sp.p[0] - sp.d[0] * sink, sp.p[1] - sp.d[1] * sink, sp.p[2] - sp.d[2] * sink];
+        L += sink;
+      } else if (!sp.parent && Math.abs(sp.p[1]) < 0.5 && sp.d[1] > 0.2 && sp.d[1] < 0.999 && String(node.params.meshType ?? 'tube').includes('tube')) {
+        const sink = (+node.params.radius || 0) * (sp.lengthScale ?? 1) * Math.sqrt(1 - sp.d[1] * sp.d[1]) / sp.d[1];
+        p0 = [sp.p[0] - sp.d[0] * sink, sp.p[1] - sp.d[1] * sink, sp.p[2] - sp.d[2] * sink];
+        L += sink;
+      }
+      const pts = [p0[0], p0[1], p0[2]];
       let s = 0;
       const minStep = L / this.segLimit;
+      const lodStep = this.lod ? 1 / this.lodKeep(node) : 1;
       // Absolute segments: the same number on every line, whatever its length.
       const fixedStep = node.params.segMode === 'absolute' ? L / clamp(Math.round(+node.params.segCount || 1), 1, this.segLimit) : 0;
       while (s < L - 1e-4) {
         c.t = s / L;
-        const st = fixedStep || Math.max(q.steps(c), minStep);
+        const st = (fixedStep || Math.max(q.steps(c), minStep)) * lodStep;
         s = s + st > L - st * 0.25 ? L : s + st;
-        pts.push(sp.p[0] + sp.d[0] * s, sp.p[1] + sp.d[1] * s, sp.p[2] + sp.d[2] * s);
+        pts.push(p0[0] + sp.d[0] * s, p0[1] + sp.d[1] * s, p0[2] + sp.d[2] * s);
       }
       const line = this.newLine(node, sp, new Float32Array(pts), L, nextId);
       this.applyChain(dirChain, line);
       if (this.life && !line.dead) lifeLine(this.life, line, this.seed);
       if (line.dead) continue;
+      // Lower LODs: fewer leaves, each larger, so the crown keeps its look.
+      if (this.lod && line.node.params.leafy) {
+        const keep = this.lodKeep(node);
+        if (hash(seed, nextId, 931) > keep) continue;
+        line.sizeScale = (line.sizeScale ?? 1) / Math.sqrt(keep);
+      }
       if (sp.axisScale) {
         // Scale X, Y and Z stretch the finished line's shape along the transform's axes (its own or the world's), around its base.
         const P = line.pts; const { k, f } = sp.axisScale;
@@ -503,6 +533,7 @@ export class Evaluator {
 
   growLines(path, spawns, src) {
     if (path.type === 'SpaceColonization') return growColonization(this, path, spawns, src);
+    if (path.type === 'GrowthPath') return growthLines(this, path, spawns, src);
     return this.buildLines(path, spawns, src);
   }
 
@@ -562,7 +593,7 @@ export class Evaluator {
       if (n.type === 'Distributor' || n.type === 'PointDistributor' || n.type === 'SurfaceDistributor') this.runDistributor(n, null);
       // With a spline parent it runs when that parent's lines exist, even if the parent is switched off.
       else if (n.type === 'Placement') { if (!this.linksIn.has(`${n.id}.parent`)) this.runDistributor(n, null); }
-      else if ((n.type === 'Path' || n.type === 'SpaceColonization') && !this.in(n.id, 'in').length) {
+      else if ((n.type === 'Path' || n.type === 'SpaceColonization' || n.type === 'GrowthPath') && !this.in(n.id, 'in').length) {
         const lines = this.growLines(n, [{ p: [0, 0, 0], d: [0, 1, 0], level: 0, pos: 0 }]);
         this.runChildren(n, lines);
       } else if (n.type === 'DrawSurf' || (n.type === 'DrawPath' && !this.in(n.id, 'parent').length)) {
@@ -595,6 +626,7 @@ export class Evaluator {
     const windLines = windTable(this);
     const meshes = [];
     const aoJobs = [];
+    const cropJobs = [];
     const avoidJobs = [];
     let tris = 0; let verts = 0;
     const metaGroups = new Map();
@@ -616,6 +648,7 @@ export class Evaluator {
         if (b.params.globalMods?.length) shapeAll(m, b.params.globalMods);
         applyMeshMods(m, b.params.meshMods, this.images, this.treeCenter);
         if (b.params.vcAO) aoJobs.push([m, +b.params.vcAOStrength || 0.7]);
+        if (b.params.cropUnder) cropJobs.push(m);
         for (const mod of b.params.meshMods || []) if (mod.on !== false && mod.type === 'avoid') avoidJobs.push([m, mod.params || {}]);
         m.nodeId = ownerOf(m.nodeId);
         meshes.push(m); tris += m.index.length / 3; verts += m.position.length / 3;
@@ -623,6 +656,22 @@ export class Evaluator {
     }
     for (const jobs of metaGroups.values()) {
       for (const m of buildMeta(this, jobs)) { meshes.push(m); tris += m.index.length / 3; verts += m.position.length / 3; }
+    }
+    // Scan base blending: a Mesh with Crop under branches loses the triangles around where blended branches enter it.
+    if (cropJobs.length) {
+      const holes = [];
+      for (const l of this.lines) {
+        if (!l.node.params.blendBase || !l.pts) continue;
+        const r = (l.radii?.[0] || l.r0 || +l.node.params.radius || 1) * 0.9;
+        // Where the branch crosses the surface: about one thickness up from its sunk start.
+        const k = Math.min(l.pts.length / 3 - 1, 1);
+        holes.push([l.pts[0], l.pts[1], l.pts[2], l.pts[k * 3], l.pts[k * 3 + 1], l.pts[k * 3 + 2], r]);
+      }
+      for (const m of cropJobs) {
+        const before = m.index.length;
+        m.index = cropAround(m, holes);
+        tris -= (before - m.index.length) / 3;
+      }
     }
     // Avoiding intersections needs every mesh in place, and comes before occlusion, which depends on where they ended up.
     for (const [m, P] of avoidJobs) {
@@ -738,4 +787,21 @@ function shapeAll(m, mods) {
   applyMods(v, m.index, mods, Math.max(y1 - y0, 1));
   for (let i = 0; i < v.length; i += 3) { v[i] += cx; v[i + 1] += y0; v[i + 2] += cz; }
   m.normal.set(computeNormals(v, m.index));
+}
+
+// The triangles of a mesh with those near the given branch entries taken out. A hole is a segment (the branch's
+// first stretch) with a radius: a triangle goes when its middle lies within that radius of the segment.
+export function cropAround(m, holes) {
+  const P = m.position; const I = m.index; const keep = [];
+  for (let t = 0; t < I.length; t += 3) {
+    const c = [0, 1, 2].map((k) => (P[I[t] * 3 + k] + P[I[t + 1] * 3 + k] + P[I[t + 2] * 3 + k]) / 3);
+    let cut = false;
+    for (const h of holes) {
+      const d = [h[3] - h[0], h[4] - h[1], h[5] - h[2]]; const dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2] || 1;
+      const s = Math.max(0, Math.min(1, ((c[0] - h[0]) * d[0] + (c[1] - h[1]) * d[1] + (c[2] - h[2]) * d[2]) / dd));
+      if (Math.hypot(c[0] - h[0] - d[0] * s, c[1] - h[1] - d[1] * s, c[2] - h[2] - d[2] * s) < h[6]) { cut = true; break; }
+    }
+    if (!cut) keep.push(I[t], I[t + 1], I[t + 2]);
+  }
+  return new Uint32Array(keep);
 }

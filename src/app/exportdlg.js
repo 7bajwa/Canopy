@@ -5,13 +5,15 @@ import { el, numberField, checkField, selectField } from './fields.js';
 import { doc } from './doc.js';
 import { facesOf } from './quads.js';
 import { writeFbx } from './fbx.js';
+import { writeUsd } from './usd.js';
+import { evaluate } from '../engine/evaluate.js';
 import { zipStore } from './zip.js';
 import { download, safeName, saveDocument } from './io.js';
 import { lineOf, lineExtents, windColors, pivotElements, pivotTextures, pivotUvs, bakeVat, piecesOf, pick, blenderUvs, BLENDER_UVS } from './exportkit.js';
 import { WIND_STRIDE } from '../engine/wind.js';
 import { lifeOf } from '../engine/life.js';
 
-const opts = { layout: 'custom', format: 'glb', pack: true, group: 'node', ch: ['none', 'none', 'none', 'none'], pivot: false, vat: false, frames: 30, seconds: 2, strength: 5, rig: false, batch: 'separate' };
+const opts = { lods: 1, nanite: false, layout: 'custom', format: 'glb', pack: true, group: 'node', ch: ['none', 'none', 'none', 'none'], pivot: false, vat: false, frames: 30, seconds: 2, strength: 5, rig: false, batch: 'separate' };
 const GRADIENTS = [['none', 'Keep color'], ['height', 'Height, bottom to top'], ['branch', 'Branch, start to end'], ['leaf', 'Leaf, start to end (flutter)'], ['random', 'Random per piece (phase)'], ['bend', 'Bend, trunk to tips']];
 // Ready-made wind layouts. Each sets the four vertex color channels (and Pivot Painter for Unreal); the matching
 // sample shaders are in the app's wind folder (wind/README.md).
@@ -39,7 +41,15 @@ export function openExport(view, toast, batch = null) {
     body.replaceChildren();
     const sec = (t, on = true) => { const d = el('details', 'set-sec'); d.open = on; d.append(el('summary', '', t)); body.append(d); return d; };
     const f = sec('File');
-    f.append(selectField('Format', opts.format, [['glb', 'GLB (glTF binary)'], ['fbx', 'FBX'], ['obj', 'OBJ, in a zip'], ['canopy', 'Canopy plant (.canopy)']], (v) => { opts.format = v; draw(); }));
+    f.append(selectField('Format', opts.format, [['glb', 'GLB (glTF binary)'], ['fbx', 'FBX'], ['usd', 'USD (.usda) for Unreal 5, Omniverse, Houdini'], ['obj', 'OBJ, in a zip'], ['canopy', 'Canopy plant (.canopy)']], (v) => { opts.format = v; draw(); }));
+    if (opts.format !== 'canopy') {
+      f.append(selectField('LODs', String(opts.lods), [['1', 'Just this one'], ['2', 'LOD0 and LOD1'], ['3', 'LOD0 to LOD2'], ['4', 'LOD0 to LOD3']], (v) => { opts.lods = +v; }));
+      f.append(el('p', 'hint', 'Each LOD has fewer tube sides and segments, and fewer, larger leaves; each node\'s LOD reduction % (Mesh tab) sets how much it thins. Files come as name_LOD0, name_LOD1…, in one zip.'));
+    }
+    if (opts.format === 'usd') {
+      f.append(checkField('Nanite assembly (Unreal 5.7+)', opts.nanite, (v) => { opts.nanite = v; }));
+      f.append(el('p', 'hint', 'Repeated pieces become one prototype each, placed by a PointInstancer, and the plant is marked as a Nanite Assembly for Unreal\'s Interchange USD import. Use "Each piece on its own" below, and keep wind gradients off so copies stay identical. See docs/ue5-export.md.'));
+    }
     if (opts.format !== 'obj') f.append(checkField('Pack textures inside the file', opts.pack, (v) => { opts.pack = v; }));
     f.append(el('p', 'hint', opts.format === 'obj' ? 'The OBJ, its MTL and the pictures come in one zip.' : opts.format === 'canopy' ? 'The editable plant, nodes and all. Off: a zip with the .canopy and a textures folder.' : 'Off puts the pictures beside the file, in a zip.'));
     if (opts.format === 'canopy') return;
@@ -267,8 +277,30 @@ async function sendToBlender(view) {
   } finally { Object.assign(opts, keep); }
 }
 
+// The plant rebuilt at a lower level of detail, in the shape partsOf reads from the view.
+function lodView(view, lod) {
+  const res = evaluate(doc.graph, { lod });
+  return {
+    meshes: res.meshes.map((m) => ({ userData: { src: m }, material: view.material(m, false, { blend: !!m.uv1, wind: !!m.wind }) })),
+    windLines: res.windLines, u: view.u, gust: view.gust,
+  };
+}
+
 async function runExport(view, title = doc.name) {
   if (opts.format === 'canopy') { saveDocument(opts.pack ? 'embed' : 'folder'); return; }
+  if (opts.lods > 1 && view.material) {
+    const all = [];
+    for (let n = 0; n < opts.lods; n++) all.push(...await exportFiles(n ? lodView(view, n) : view, `${title}_LOD${n}`));
+    download(`${safeName(title)}_LODs.zip`, new Blob([zipStore(all)], { type: 'application/zip' }));
+    return;
+  }
+  const files = await exportFiles(view, title);
+  if (files.length === 1) download(files[0].name, new Blob([files[0].data]));
+  else download(`${safeName(title)}.zip`, new Blob([zipStore(files)], { type: 'application/zip' }));
+}
+
+// The files one export makes, the main one first.
+async function exportFiles(view, title) {
   const { parts, table, pp } = partsOf(view);
   const name = safeName(title);
   const extra = [];
@@ -292,12 +324,30 @@ async function runExport(view, title = doc.name) {
   let main;
   if (opts.format === 'glb') main = { name: `${name}.glb`, data: await glb(parts, packed, table) };
   else if (opts.format === 'fbx') main = { name: `${name}.fbx`, data: fbx(parts, pics, packed) };
+  else if (opts.format === 'usd') {
+    const { usda, files } = usd(parts, pics, name);
+    return [{ name: `${name}.usda`, data: usda }, ...files.map((x) => ({ name: x.file, data: x.bytes })), ...extra];
+  }
   else main = { name: `${name}.obj`, data: obj(parts, pics) };
   const files = [main, ...extra];
   if (opts.format === 'obj') files.push({ name: `${name}.mtl`, data: mtl(parts, pics) });
   if (!packed) for (const f of pics.values()) files.push({ name: f.file, data: f.bytes });
-  if (files.length === 1) download(main.name, new Blob([main.data]));
-  else download(`${name}.zip`, new Blob([zipStore(files)], { type: 'application/zip' }));
+  return files;
+}
+
+// USD: the same pieces as FBX, placed by quaternion; the pictures are files beside the .usda.
+function usd(parts, pics, name) {
+  return writeUsd(parts.map((p) => {
+    const mats = [p.material].flat();
+    return {
+      name: p.name, position: p.position, normal: p.normal, uv: p.uv, color: p.color, colorA: p.colorA, index: p.index, quadTri: p.quadTri,
+      uvs: p.uvs.filter(Boolean), uvNames: p.uvNames, polyMat: p.polyMat, translation: p.translation, quaternion: p.quaternion,
+      materials: mats.map((m, i) => ({
+        name: matName(m, `${p.name}_${i + 1}`), rgb: rgbOf(m), alphaTest: m?.alphaTest || 0.5,
+        maps: Object.fromEntries([['diffuse', m?.map], ['normal', m?.normalMap], ['opacity', m?.alphaMap]].filter(([, t]) => pics.has(t?.image)).map(([k, t]) => [k, pics.get(t.image)])),
+      })),
+    };
+  }), { name, instancing: opts.nanite, naniteAssembly: opts.nanite });
 }
 
 const matName = (m, fallback) => safeName(m?.name || fallback);
@@ -368,7 +418,7 @@ function fbx(parts, pics, packed) {
       name: p.name, position: p.position, normal: p.normal, uv: p.uv, color: p.color, colorA: p.colorA, index: p.index, quadTri: p.quadTri,
       uvs: p.uvs.filter(Boolean), uvNames: p.uvNames, rgb: rgbOf(mats[0]), polyMat: p.polyMat,
       translation: p.translation && [p.translation.x, p.translation.y, p.translation.z],
-      rotation: p.quaternion && (e.setFromQuaternion(p.quaternion, 'XYZ'), [e.x, e.y, e.z].map((r) => (r * 180) / Math.PI)),
+      rotation: p.quaternion && (e.setFromQuaternion(p.quaternion, 'ZYX'), [e.x, e.y, e.z].map((r) => (r * 180) / Math.PI)),
       materials: mats.map((m, i) => ({
         name: matName(m, `${p.name}_${i + 1}`), rgb: rgbOf(m),
         maps: Object.fromEntries([['diffuse', m?.map], ['normal', m?.normalMap], ['opacity', m?.alphaMap]].filter(([, t]) => pics.has(t?.image)).map(([k, t]) => {

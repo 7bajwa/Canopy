@@ -7,6 +7,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { threeTexture, threeMap, solidMap } from './textures.js';
 import { gustAt, WIND_STRIDE } from '../engine/wind.js';
 import { bakeOcclusion } from './ao.js';
+import { windColors, lineExtents } from './exportkit.js';
 import { ScaleIndicator } from './scalefig.js';
 
 const TREE_LAYER = 1;
@@ -91,7 +92,7 @@ export class Viewport {
     this.selLines = null;
     this.box = null;
     this.materials = new Map();
-    this.u = { uTime: { value: 0 }, uWindDir: { value: new THREE.Vector3(1, 0, 0) }, uWindS: { value: 0 }, uWindTable: { value: null }, uSunDir: { value: new THREE.Vector3() } };
+    this.u = { uSnow: { value: 0 }, uTime: { value: 0 }, uWindDir: { value: new THREE.Vector3(1, 0, 0) }, uWindS: { value: 0 }, uWindTable: { value: null }, uSunDir: { value: new THREE.Vector3() } };
     this.windOn = false;
     this.windNow = 0;
     this.windClock = 0;
@@ -240,7 +241,31 @@ export class Viewport {
   setShading(mode) {
     this.shading = mode;
     if (mode === 'gray') this.bakeAo();
+    this.windView();
     this.highlight();
+  }
+
+  // The Wind view: each point colored by the wind data an export carries (red flutter, green phase, blue bend),
+  // while it still sways, so each node's Wind settings can be tuned against what an engine will get.
+  windView() {
+    const on = this.shading === 'wind';
+    let ctx = null;
+    for (const mesh of this.meshes) {
+      const g = mesh.geometry; const src = mesh.userData.src;
+      if (on && !mesh.userData.windColor) {
+        if (!ctx) {
+          const srcs = this.meshes.map((m) => m.userData.src); let lo = Infinity; let hi = -Infinity;
+          for (const s of srcs) for (let i = 1; i < s.position.length; i += 3) { lo = Math.min(lo, s.position[i]); hi = Math.max(hi, s.position[i]); }
+          ctx = { table: this.windLines || new Float32Array(0), ext: lineExtents(srcs, this.windLines || new Float32Array(0)), lo, hi };
+        }
+        const rgba = windColors(src, ['leaf', 'random', 'bend', 'none'], ctx);
+        const rgb = new Float32Array((rgba.length / 4) * 3);
+        for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) { rgb[j] = rgba[i]; rgb[j + 1] = rgba[i + 1]; rgb[j + 2] = rgba[i + 2]; }
+        mesh.userData.windColor = new THREE.BufferAttribute(rgb, 3);
+      }
+      g.setAttribute('color', on ? mesh.userData.windColor : new THREE.BufferAttribute(src.color, 3));
+    }
+    this.invalidate();
   }
 
   // The wireframe lies on top of the shaded plant, in a color and strength from the settings.
@@ -409,6 +434,8 @@ export class Viewport {
     if (see < 1) { common.transparent = true; common.opacity = see; }
     if (shade === 'flat') {
       mat = new THREE.MeshBasicMaterial({ ...common, color: mm.color, vertexColors: true, toneMapped: false });
+    } else if (shade === 'wind') {
+      mat = new THREE.MeshBasicMaterial({ ...common, color: 0xffffff, vertexColors: true, toneMapped: false });
     } else if (shade === 'gray') {
       mat = new THREE.MeshStandardMaterial({ ...common, color: 0xffffff, roughness: 0.92, metalness: 0 });
     } else if (shade === 'color') {
@@ -429,6 +456,7 @@ export class Viewport {
     if (leaf && shade === 'pbr') defines.LEAF = 1;
     if (map && !mm.texture.startsWith('bark:')) defines.UNPREMUL = 1;
     if (shade === 'gray') defines.GRAY = 1;
+    if (shade === 'wind') defines.WIND_VIEW = 1;
     if (shade === 'color') defines.AVG_COLOR = 1;
     // Subsurface is a color: black means none. It only shows in the full PBR view.
     const sss = new THREE.Color().setRGB(...[1, 3, 5].map((k) => parseInt((mm.sssColor || '#000000').slice(k, k + 2), 16) / 255), THREE.LinearSRGBColorSpace);
@@ -462,6 +490,14 @@ export class Viewport {
 
   patch(shader) {
     Object.assign(shader.uniforms, this.u);
+    // Snow (Age & season): surfaces facing up whiten, by the world-space normal.
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vSnowN;')
+      .replace('#include <uv_vertex>', 'vSnowN = normalize(mat3(modelMatrix) * normal);\n#include <uv_vertex>');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vSnowN; uniform float uSnow;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        if (uSnow > 0.0) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.92, 0.94, 0.97), uSnow * smoothstep(0.05, 0.55, vSnowN.y));`);
     shader.vertexShader = shader.vertexShader
       .replace('#include <uv_vertex>', `#ifdef WIND
           vec3 windPos = position; vec3 windNormal = normal;
@@ -499,6 +535,11 @@ export class Viewport {
         #ifdef WIND
           transformed = windPos;
         #endif`);
+    // The Wind view keeps a leaf's cutout (the picture's alpha) but shows only the wind colors.
+    shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+      #ifdef WIND_VIEW
+        diffuseColor.rgb = vColor.rgb;
+      #endif`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         #ifdef BARK_BLEND
@@ -566,6 +607,8 @@ export class Viewport {
   }
 
   apply(res) {
+    const life = doc.graph.settings?.life;
+    this.u.uSnow.value = life?.on ? Math.min(1, Math.max(0, +life.snow || 0)) : 0;
     const first = !this.box;
     for (const m of this.meshes) { m.geometry.dispose(); this.scene.remove(m); }
     for (const h of this.helpers) { h.geometry.dispose(); h.material.dispose(); this.scene.remove(h); }
@@ -596,6 +639,7 @@ export class Viewport {
       this.scene.add(mesh);
       this.meshes.push(mesh);
     }
+    if (this.shading === 'wind') this.windView();
     this.buildLines(res);
     this.buildHelpers(res);
     if (box.isEmpty() && res.lines.position.length) {

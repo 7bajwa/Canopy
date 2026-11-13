@@ -139,7 +139,8 @@ function expandSpline(graph, n, parentKind, nodes, links) {
     nodes.push(makeNode(pathId, 'DrawPath', n.on, { strokes: n.params.strokes, length: 1e6, capToDrawing: true, wire: n.params.wire }));
   } else {
     nodes.push(placementNode(n, parts, parentKind));
-    nodes.push(makeNode(pathId, 'Path', n.on, { ...parts.path, visible: true }));
+    // Growth: the line grows itself into a whole branching tree from each start point (engine/growth.js).
+    nodes.push(makeNode(pathId, n.params.growOn ? 'GrowthPath' : 'Path', n.on, { ...parts.path, visible: true }));
     links.push({ id: `${pathId}:in`, from: placeId, fromSock: 'out', to: pathId, toSock: 'in' });
   }
   chainMods(n, pathId, nodes, links);
@@ -166,7 +167,7 @@ function expandMesh(graph, n, parentKind, nodes, links) {
   // Each copy gets its own transform from the Placement, so the shape it copies is baked without one.
   const obj = bakeShape({ ...n.params, mods: local, pos: [0, 0, 0], rot: [0, 0, 0], scl: [1, 1, 1] });
   const globalMods = (P0.mods || []).filter((m) => m.on !== false && m.params?.space === 'all together');
-  nodes.push(makeNode(buildId, 'InstancedGeometry', n.on, { ...surfaceOf(graph, n, parts, 'tube').m, position: 0, scale: 100, randomScale: 0, owned: true, globalMods }));
+  nodes.push(makeNode(buildId, 'InstancedGeometry', n.on, { ...surfaceOf(graph, n, parts, 'tube').m, position: 0, scale: 100, randomScale: 0, owned: true, globalMods, cropUnder: !!P0.cropUnder }));
   nodes.push(makeNode(elId, 'InstancedElement', n.on, { shape: 'imported', obj, size: 100, color: '#ffffff', rate: 100 }));
   links.push(
     { id: `${buildId}:in`, from: pathId, fromSock: 'mesh', to: buildId, toSock: 'in' },

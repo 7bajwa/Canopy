@@ -12,7 +12,7 @@
 import { hash, clamp } from './math.js';
 import { finishLine } from './line.js';
 
-export const LIFE_DEFAULTS = { on: false, age: 1, season: 0.25, health: 1, levelDelay: 0.14, spread: 0.12 };
+export const LIFE_DEFAULTS = { on: false, age: 1, season: 0.25, health: 1, levelDelay: 0.14, spread: 0.12, fallen: 0, snow: 0 };
 
 export function lifeOf(settings) {
   const L = { ...LIFE_DEFAULTS, ...(settings?.life || {}) };
@@ -43,6 +43,26 @@ export function seasonTint(s, r, health = 1) {
   return c;
 }
 
+// A dropped leaf, laid flat on the ground below where it hung, a little way out, turned any way.
+function layOnGround(line, r) {
+  const P = line.pts; const n = P.length / 3;
+  const h = Math.max(0, P[1]);
+  const a = r(907) * Math.PI * 2; const out = h * 0.35 * Math.sqrt(r(908));
+  const x0 = P[0] + Math.cos(a) * out; const z0 = P[2] + Math.sin(a) * out;
+  const b = r(909) * Math.PI * 2; const dx = Math.cos(b); const dz = Math.sin(b);
+  let s = 0;
+  const out3 = new Float32Array(P.length);
+  for (let i = 0; i < n; i++) {
+    if (i) s += Math.hypot(P[i * 3] - P[i * 3 - 3], P[i * 3 + 1] - P[i * 3 - 2], P[i * 3 + 2] - P[i * 3 - 1]);
+    out3[i * 3] = x0 + dx * s; out3[i * 3 + 1] = 0.3 + i * 0.02; out3[i * 3 + 2] = z0 + dz * s;
+  }
+  line.pts = out3;
+  line.fallen = true;
+  // It no longer rides its branch in the wind.
+  line.parent = null; line.level = 0;
+  finishLine(line);
+}
+
 // One line, right after it has grown (before its children are placed on it). leafy: the line carries leaves.
 export function lifeLine(L, line, seed) {
   const leafy = !!line.node.params.leafy;
@@ -59,7 +79,11 @@ export function lifeLine(L, line, seed) {
     if (r(902) < clamp(1 - L.health, 0, 1) * 0.45) { line.dead = true; return; }
     const ph = r(903);
     line.season = ph;
-    if (ph < dropAt(L.season) * (0.85 + 0.3 * ph)) { line.dead = true; return; }
+    if (ph < dropAt(L.season) * (0.85 + 0.3 * ph)) {
+      // Some of the dropped leaves lie on the ground under the plant.
+      if (L.fallen > 0 && r(906) < L.fallen) layOnGround(line, r); else line.dead = true;
+      return;
+    }
     // A young plant carries fewer leaves.
     if (r(905) > 0.3 + 0.7 * Math.min(L.age, 1)) { line.dead = true; return; }
   }
