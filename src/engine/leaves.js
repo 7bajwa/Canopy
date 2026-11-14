@@ -140,11 +140,36 @@ function setCommon(buf, idx, col, col2, line, t, flutter) {
 }
 
 // One cutout leaf on its line.
+// The far LODs' cutout: one quad over the leaf's extent, its UVs fitted (an affine map from the leaf's own t, x
+// to the picture's u, v), so the picture's alpha still draws the outline. No 3D edits.
+const cards = new WeakMap();
+export function cutoutCard(mesh) {
+  if (cards.has(mesh)) return cards.get(mesh);
+  const { pts } = mesh;
+  let t0 = Infinity; let t1 = -Infinity; let x0 = Infinity; let x1 = -Infinity;
+  for (const p of pts) { t0 = Math.min(t0, p.t); t1 = Math.max(t1, p.t); x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); }
+  // Least squares for u = a·t + b·x + c (and the same for v).
+  const fit = (k) => {
+    let stt = 0; let stx = 0; let st = 0; let sxx = 0; let sx = 0; let n = 0; let su = 0; let stu = 0; let sxu = 0;
+    for (const p of pts) { stt += p.t * p.t; stx += p.t * p.x; st += p.t; sxx += p.x * p.x; sx += p.x; n++; su += p[k]; stu += p.t * p[k]; sxu += p.x * p[k]; }
+    const M = [[stt, stx, st], [stx, sxx, sx], [st, sx, n]]; const B = [stu, sxu, su];
+    const det = (m) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    const D = det(M) || 1;
+    return [0, 1, 2].map((c) => det(M.map((row, r) => row.map((v, j) => (j === c ? B[r] : v)))) / D);
+  };
+  const fu = fit('u'); const fv = fit('v');
+  const corner = (t, x) => ({ t, x, u: fu[0] * t + fu[1] * x + fu[2], v: fv[0] * t + fv[1] * x + fv[2] });
+  const card = { pts: [corner(t0, x0), corner(t0, x1), corner(t1, x1), corner(t1, x0)], tris: [0, 1, 2, 0, 2, 3] };
+  cards.set(mesh, card);
+  return card;
+}
+
 function cutoutLeaf(ev, buf, job, line, cut, steps, ct, flip, shape) {
   const P = job.node.params;
   const comps = job.comps;
   const col = [1, 1, 1]; const col2 = [1, 1, 1];
-  const { pts, tris } = cut.mesh;
+  const far = ev.lod >= 2 && (+(line.node.params.lodReduce ?? 100)) > 0;
+  const { pts, tris } = far ? cutoutCard(cut.mesh) : cut.mesh;
   const at = leafShaper(ev, job, line, ct, shape);
   const count = pts.length;
   const sides = P.twoSided ? 2 : 1;
@@ -152,7 +177,7 @@ function cutoutLeaf(ev, buf, job, line, cut, steps, ct, flip, shape) {
   for (let i = 0; i < count; i++) {
     const pt = pts[i];
     // A shape edited in 3D moves points without moving their texture.
-    const o = cut.deform?.[i];
+    const o = far ? null : cut.deform?.[i];
     const { p, s, t } = o ? at(pt.t + o[1], pt.x + o[0], o[2]) : at(pt.t, pt.x);
     const idx = base + i;
     buf.position[idx * 3] = p[0]; buf.position[idx * 3 + 1] = p[1]; buf.position[idx * 3 + 2] = p[2];
@@ -349,8 +374,11 @@ function blendLeafBase(buf, v0, v1, line, P) {
     const s = d[0] * T[0] + d[1] * T[1] + d[2] * T[2];
     if (s >= H) continue;
     const w = (1 - Math.max(0, s) / H) ** pow;
-    const k = 1 + spread * w;
-    const p = [0, 1, 2].map((i) => o[i] + T[i] * s + (d[i] - T[i] * s) * k);
+    // Out from the midrib: widened by Blend spread, and at least a share of the parent's thickness at the base, so a
+    // leaf that narrows to a point still meets the bark with some width.
+    const lat = [d[0] - T[0] * s, d[1] - T[1] * s, d[2] - T[2] * s]; const ll = Math.hypot(...lat);
+    const want = ll > 1e-6 ? Math.max(ll * (1 + spread * w), spread * R * w * 0.6) / ll : 1;
+    const p = [0, 1, 2].map((i) => o[i] + T[i] * s + lat[i] * want);
     // The nearest spot on the parent's axis, then out to its surface the way this point lies from it.
     const sp = clamp(line.parentS + (p[0] - pa[0]) * pt[0] + (p[1] - pa[1]) * pt[1] + (p[2] - pa[2]) * pt[2], 0, parent.length);
     sampleLine(parent, sp, B1);

@@ -37,3 +37,17 @@ test('LODs thin the plant: fewer triangles each level, still the same plant', as
   assert.ok(t[0] > t[1] && t[1] > t[2] && t[2] > t[3], t.join(' > '));
   assert.ok(t[3] > t[0] * 0.03, 'something is left');
 });
+
+test('growth cuts and leaves on young wood', () => {
+  const nodes = simulateGrowth({ growYears: 12, cutTop: 300, cutSpread: 150, cutClear: 120 }, 2, [0, 0, 0], [0, 1, 0]).filter((n) => n.alive);
+  assert.ok(nodes.every((n) => n.p[1] <= 300 + 1e-6), 'nothing above Max height');
+  assert.ok(nodes.every((n) => Math.hypot(n.p[0], n.p[2]) <= 150 + 1e-6), 'nothing beyond Max spread');
+  assert.ok(nodes.filter((n) => n.order > 0).every((n) => n.p[1] >= 120 - 1e-6), 'no side branches below Clear trunk');
+  const leafCount = (leafYears) => {
+    const tree = { id: 't', type: 'Spline', x: 0, y: 0, on: true, params: { ...defaultParams('Spline'), growOn: true, growYears: 10, leafYears } };
+    const leaves = { id: 'l', type: 'Spline', x: 0, y: 0, on: true, params: { ...defaultParams('Spline'), place: 'spline', start: 0, density: 20, length: 8, meshType: 'leaf' } };
+    const L = evaluate({ nodes: [tree, leaves], links: [{ id: 'k', from: 't', fromSock: 'children', to: 'l', toSock: 'parent' }], groups: [], settings: {} }, {}).lines;
+    const s = new Set(); for (let k = 0; k < L.owner.length; k += 2) if (L.nodeIds[L.owner[k]] === 'l') s.add(L.lineId[k]); return s.size;
+  };
+  assert.ok(leafCount(2) < leafCount(0), 'fewer leaves when only young wood carries them');
+});

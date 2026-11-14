@@ -7,7 +7,7 @@ import { doc, on, loadGraph, resetHistory, regenerate, commit, undo, redo, setAu
 import { NODE_TYPES, socketsOf, kindFits, clone, defaultParams } from './graph/schema.js';
 import { makeApi, startBridge, stopBridge } from './app/aibridge.js';
 import { makeLibrary } from './app/library.js';
-import { makeImpostor } from './app/impostor.js';
+import { makeCards } from './app/cards.js';
 import { checkForUpdate } from './app/updater.js';
 import { GraphView, setTextScale, NODE_W, setGraphPalette } from './app/graphview.js';
 import { Viewport } from './app/viewport.js';
@@ -362,7 +362,7 @@ function setLayout(mode) {
 const xfGizmo = new XfGizmo(view);
 const life = makeLife();
 const scanBake = makeScanBake({ view, toast: (m, ms) => toast(m, ms) });
-const impostor = makeImpostor({ view, toast: (m, ms) => toast(m, ms) });
+const cards = makeCards({ view, toast: (m, ms) => toast(m, ms) });
 const renderer = makeRender({ view, prefs, setPref: (k, v) => setPref(k, v), toast: (m) => toast(m), download: (u) => downloadImage(u), hide: () => [xfGizmo.helper] });
 const ui = {
   gizmo: xfGizmo,
@@ -1068,7 +1068,7 @@ const actions = {
   render: () => renderer.quick(),
   renderSettings: () => renderer.open(),
   scanBake: () => scanBake.open(),
-  impostor: () => impostor.open(),
+  cards: () => cards.open(),
   life: () => life.open(),
   undo, redo,
   prefs: () => openSettings(settingsEl, prefs, setPref),

@@ -294,13 +294,16 @@ export function prepareJunctions(ev) {
     if (job.node.type !== 'CylinderMesh') continue;
     for (const line of job.lines) if (line.radii) line.meshSides = sidesOf(ev, job, line);
   }
+  // A tip tube takes its parent's side count, so its first ring lies on the parent's last one, point for point.
+  for (const job of ev.jobs.values()) for (const line of job.lines) if (line.parent?.tipChild === line && line.parent.meshSides) line.meshSides = line.parent.meshSides;
   for (const job of ev.jobs.values()) {
     if (job.node.type !== 'CylinderMesh' || !job.comps.blend) continue;
     const q = ev.q(job.comps.blend);
     const c = ev.ctx;
     for (const line of job.lines) {
       const parent = line.parent;
-      if (!parent?.radii || line.n < 2) continue;
+      // A tip tube carries its parent on (continueTips): no junction to blend.
+      if (!parent?.radii || line.n < 2 || parent.tipChild === line) continue;
       c.line = line; c.t = 0; c.lineId = line.id;
       sampleLine(parent, line.parentS, P0);
       const R = P0.r;

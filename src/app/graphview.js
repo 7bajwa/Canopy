@@ -756,6 +756,13 @@ function drawTabIcon(c, tab, x, y, color) {
     c.moveTo(x - 8, y + 1); c.lineTo(x + 6, y + 1); c.bezierCurveTo(x + 10, y + 1, x + 10, y + 7, x + 5, y + 7);
     c.moveTo(x - 8, y + 5); c.lineTo(x, y + 5);
     c.stroke();
+  } else if (tab === 'growth') {
+    // A sprout: a stem forking into two shoots, a bud on each.
+    c.moveTo(x, y + 8); c.lineTo(x, y);
+    c.moveTo(x, y + 1); c.quadraticCurveTo(x - 1, y - 4, x - 6, y - 6);
+    c.moveTo(x, y + 3); c.quadraticCurveTo(x + 2, y - 2, x + 6, y - 3);
+    c.stroke();
+    c.beginPath(); c.arc(x - 6, y - 6, 1.8, 0, 7); c.arc(x + 6, y - 3, 1.8, 0, 7); c.arc(x, y - 1, 1.8, 0, 7); c.fill();
   } else {
     c.arc(x, y, 7, 0, 7);
     c.stroke();

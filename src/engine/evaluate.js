@@ -355,7 +355,7 @@ export class Evaluator {
       attach: null, roll: null, startDir: spawn.d, upHint: spawn.up || null, lastLevel: true,
       rootDist: spawn.parent ? spawn.parent.rootDist + (spawn.s || 0) : 0,
       chainPos: spawn.parent ? (spawn.parent.rootDist + (spawn.s || 0)) / Math.max(1e-3, spawn.parent.rootDist + spawn.parent.length) : 0,
-      colorFn: null, radii: null, capEnd: null, capStart: null, dead: false, windW: 0, sizeScale: spawn.scale ?? 1, xf: spawn.xf || null, inst: spawn.key || 0,
+      colorFn: null, radii: null, capEnd: null, capStart: null, dead: false, windW: 0, sizeScale: spawn.scale ?? 1, xf: spawn.xf || null, inst: spawn.key || 0, isTip: !!spawn.tip,
     };
     finishLine(line);
     return line;
@@ -622,6 +622,7 @@ export class Evaluator {
     let lo = Infinity; let hi = -Infinity;
     for (const l of this.lines) for (let i = 1; i < l.pts.length; i += 3) { lo = Math.min(lo, l.pts[i]); hi = Math.max(hi, l.pts[i]); }
     this.plantY = lo < hi ? [lo, hi] : [0, 1];
+    continueTips(this.lines);
     prepareJunctions(this);
     const windLines = windTable(this);
     const meshes = [];
@@ -804,4 +805,31 @@ export function cropAround(m, holes) {
     if (!cut) keep.push(I[t], I[t + 1], I[t + 2]);
   }
   return new Uint32Array(keep);
+}
+
+// A tube's tip copy carries the tube on: the parent's end has no cap, the copy starts on the parent's end ring with
+// its thickness, eases to its own over its first fifth, and leaves along the parent's heading before it turns. One
+// tip tube per parent (the first); more tips at one end still meet there with caps.
+export function continueTips(lines) {
+  for (const l of lines) {
+    const p = l.parent;
+    if (!l.isTip || !p?.radii || !l.radii || l.n < 3 || p.tipChild) continue;
+    p.tipChild = l;
+    p.capEnd = 'none'; l.capStart = 'none';
+    const Rend = p.radii[p.radii.length - 1];
+    for (let i = 0; i < l.n; i++) {
+      const t = l.len[i] / Math.max(1e-6, l.length); const f = t >= 0.2 ? 1 : (t / 0.2) ** 2 * (3 - 2 * t / 0.2);
+      l.radii[i] = Rend * (1 - f) + l.radii[i] * f;
+    }
+    if (l.pointR) l.pointR = l.radii;
+    const P = l.pts; const n = p.pts.length / 3;
+    const T = [p.pts[n * 3 - 3] - p.pts[n * 3 - 6], p.pts[n * 3 - 2] - p.pts[n * 3 - 5], p.pts[n * 3 - 1] - p.pts[n * 3 - 4]];
+    const tl = Math.hypot(...T) || 1; const d1 = Math.hypot(P[3] - P[0], P[4] - P[1], P[5] - P[2]);
+    for (let k = 0; k < 3; k++) P[3 + k] = P[k] + (T[k] / tl) * d1;
+    finishLine(l);
+    l.r0 = l.radii[0];
+    // Rings start turned the same way as the parent's last one (same frame, same side count: see tube.js).
+    ensureFrames(p);
+    l.upHint = [p.U[n * 3 - 3], p.U[n * 3 - 2], p.U[n * 3 - 1]];
+  }
 }

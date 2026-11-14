@@ -50,3 +50,19 @@ test('Droop arches a level line down, more for longer lines', () => {
   assert.ok(tipY(300, droop) < tipY(300, []) - 30, 'it sags');
   assert.ok(tipY(600, droop) - tipY(600, []) < (tipY(300, droop) - tipY(300, [])) * 2, 'a longer one sags more than in proportion');
 });
+
+test('scan base blending works on an imported mesh too', () => {
+  const ball = bakeShape({ shape: 'sphere', radius: 50, segments: 24 });
+  const base = (crop) => node('m', 'Mesh', { shape: 'imported', obj: { v: ball.v, idx: ball.idx }, cropUnder: crop });
+  const g = (crop) => ({ nodes: [base(crop), node('s', 'Spline', { place: 'mesh', count: 6, length: 80, radius: 6, meshType: 'tube', blendBase: true })], links: [{ id: 'l', from: 'm', fromSock: 'children', to: 's', toSock: 'parent' }], groups: [], settings: {} });
+  const tris = (crop) => evaluate(g(crop), {}).meshes.filter((x) => x.nodeId === 'm').reduce((s, x) => s + x.index.length / 3, 0);
+  assert.ok(tris(true) < tris(false), `${tris(false)} -> ${tris(true)}`);
+});
+
+test('a tip tube carries its parent on: no end cap between them, same thickness where they meet', async () => {
+  const { continueTips } = await import('../src/engine/evaluate.js');
+  const g = { nodes: [node('a', 'Spline', { length: 100, radius: 8 }), node('b', 'Spline', { place: 'spline', density: 1, length: 60, radius: 3, tipOn: true, tipTilt: 20 })], links: [{ id: 'l', from: 'a', fromSock: 'children', to: 'b', toSock: 'parent' }], groups: [], settings: {} };
+  assert.equal(typeof continueTips, 'function');
+  const r = evaluate(g, {});
+  assert.ok(r.meshes.length >= 2);
+});

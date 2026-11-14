@@ -146,7 +146,7 @@ function partsOf(view) {
     const src = mesh.userData.src;
     return {
       name: nodeName(src.nodeId), src, material: mesh.material, kind: src.kind, leafLines,
-      position: src.position, normal: src.normal, uv: src.uv, color: src.color, index: src.index, wind: src.wind,
+      position: src.position, normal: src.normal, uv: src.uv, color: snowed(src), index: src.index, wind: src.wind,
       quadTri: src.quads ? new Uint8Array(src.index.length / 3).fill(1) : null,
       colorA: tinted ? windColors(src, opts.ch, ctx) : null,
       uvs: forBlender ? blenderUvs(src, ctx) : [pp ? pivotUvs(src, pp) : src.uv1 || null],
@@ -156,6 +156,18 @@ function partsOf(view) {
   if (opts.group === 'instances') parts = parts.flatMap((p) => instancesOf(p, table));
   if (opts.group === 'single') parts = [merge(parts)];
   return { parts, table, pp };
+}
+
+// Snow (Age & season) goes out in the vertex colors: up-facing points whiten, as in the view.
+function snowed(src) {
+  const L = doc.graph.settings?.life; const k = L?.on ? Math.min(1, Math.max(0, +L.snow || 0)) : 0;
+  if (!k) return src.color;
+  const c = new Float32Array(src.color); const N = src.normal;
+  for (let i = 0; i < c.length / 3; i++) {
+    const t = Math.min(1, Math.max(0, (N[i * 3 + 1] - 0.05) / 0.5)); const w = k * t * t * (3 - 2 * t);
+    for (let j = 0; j < 3; j++) c[i * 3 + j] += ([0.92, 0.94, 0.97][j] - c[i * 3 + j]) * w;
+  }
+  return c;
 }
 
 // Cuts a part into its pieces, each moved to its base and turned so its local Y is the way it grows.

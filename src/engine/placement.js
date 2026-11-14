@@ -21,7 +21,7 @@ function emitter(ev, dn, q, out) {
   const inst = dn.params.inst || null;
   // `mirror` is the second side of a pair (or every other one): its turns run the other way, so pairs open
   // and close like wings, and its transform is reflected across the plane through the parent line.
-  return function emit({ p, axis, radial, t, key, line = null, s = 0, tilt = null, sizeK = 1, mirror = false, spinAdd = 0, rollAdd = 0 }) {
+  return function emit({ p, axis, radial, t, key, line = null, s = 0, tilt = null, sizeK = 1, mirror = false, spinAdd = 0, rollAdd = 0, tip = false }) {
     c.line = line; c.lineId = key; c.t = t; c.pos = t; c.level = line ? line.level + 1 : 0; c.chainPos = t;
     const rnd = (salt) => hash(seed, key, salt);
     const sgn = mirror ? -1 : 1;
@@ -66,7 +66,8 @@ function emitter(ev, dn, q, out) {
       axisScale: !identity && axes.some((a) => a !== 1) ? { k: axes, f: F.map(M) } : null,
       angleDiv: a / DEG, angleBend: 0, offset: 0, distance: 0, key,
       // Deleted in the entity editor: it keeps its place in the count, so the others stay as they are.
-      hide: !!ov?.hide,
+      hide: !!ov?.hide || (line?.youngFrom > 0 && t < line.youngFrom),
+      tip,
     });
   };
 }
@@ -214,7 +215,7 @@ function splineMode(ev, dn, q, parents, emit, seed) {
         c.line = line; c.t = 1; c.pos = 1; c.lineId = key;
         const tilt = q.tipTilt(c); const sizeK = q.tipScale(c) / 100;
         const spinAdd = q.tipRot ? q.tipRot(c) : 0; const rollAdd = q.tipRoll ? q.tipRoll(c) : 0;
-        emit({ p, axis, radial: around(f, phi0 + (i / count) * Math.PI * 2), t: 1, key, line, s: L, tilt, sizeK, spinAdd, rollAdd });
+        emit({ p, axis, radial: around(f, phi0 + (i / count) * Math.PI * 2), t: 1, key, line, s: L, tilt, sizeK, spinAdd, rollAdd, tip: true });
       }
     }
   }

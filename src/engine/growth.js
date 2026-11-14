@@ -16,7 +16,7 @@ export const GROWTH_DEFAULTS = {
   growYears: 18, internode: 30, budRadius: 0.5, pipeExp: 2.5, branchAngle: 45, phyllotaxis: 137.5, budsPerNode: 1,
   angNoise: 0.2, growSpeed: 2, apical: 0.52, decay: 0.9, shadowStrength: 1, shadowSize: 6, lightInfluence: 1,
   shedding: 0.25, verticalTrunk: 0.8, gravAngle: 70, gravInfluence: 0.25, photoInfluence: 0.4, favorUp: 0, favorSides: 0,
-  growMax: 6000,
+  growMax: 6000, cutTop: 0, cutSpread: 0, cutClear: 0, leafYears: 0,
 };
 
 // Starting points per species (estimates to tune by eye; lengths in cm).
@@ -48,7 +48,9 @@ export function simulateGrowth(P, seed, p0, d0, obstacle = null) {
   const per = clamp(Math.round(g.budsPerNode), 1, 8);
   let rnd = 0;
   const rand = () => hash(seed, ++rnd, 51);
-  const nodes = [{ p: p0.slice(), d: norm(d0), parent: -1, main: -1, lats: [], order: 0, alive: true, buds: [], tip: true, Q: 0, sub: 0, count: 0, phase: 0 }];
+  const nodes = [{ p: p0.slice(), d: norm(d0), parent: -1, main: -1, lats: [], order: 0, alive: true, buds: [], tip: true, Q: 0, sub: 0, count: 0, phase: 0, year: 0 }];
+  // Cuts: nothing grows above Max height or beyond Max spread from the base; side branches start above Clear trunk.
+  const cut = (p, order) => (g.cutTop > 0 && p[1] - p0[1] > g.cutTop) || (g.cutSpread > 0 && Math.hypot(p[0] - p0[0], p[2] - p0[2]) > g.cutSpread) || (order > 0 && g.cutClear > 0 && p[1] - p0[1] < g.cutClear);
 
   // Side buds on a new node: around its heading by the phyllotaxis angle, out by the branch angle.
   const addBuds = (n) => {
@@ -153,9 +155,9 @@ export function simulateGrowth(P, seed, p0, d0, obstacle = null) {
         let nd = norm(add(add(add(d, mul(lean, g.photoInfluence)), mul(trop, g.gravInfluence)), mul(noise, g.angNoise)));
         if (order === 0) nd = norm(add(mul(nd, 1 - g.verticalTrunk), mul(UP, g.verticalTrunk)));
         const p = add(from.p, mul(nd, L));
-        if (obstacle?.(p) || p[1] < -L) break;
+        if (obstacle?.(p) || p[1] < -L || cut(p, order)) break;
         const idx = nodes.length;
-        const n = { p, d: nd, parent: at, main: -1, lats: [], order, alive: true, buds: [], tip: true, phase: from.phase + g.phyllotaxis, Q: 0, sub: 0, count: 0 };
+        const n = { p, d: nd, parent: at, main: -1, lats: [], order, alive: true, buds: [], tip: true, phase: from.phase + g.phyllotaxis, Q: 0, sub: 0, count: 0, year };
         nodes.push(n);
         if (first && !s.axis) { from.lats.push(idx); n.lat = true; }
         else { from.main = idx; from.tip = false; }
@@ -206,6 +208,12 @@ export function growthLines(ev, node, spawns, srcChain) {
       ev.applyChain(ev.chain(node, 'dir'), line);
       if (line.dead) return;
       if (line.pts.length / 3 !== radii.length) { line.pointR = null; line.radii = null; }
+      // Leaves on young wood only: children start where this axis is younger than Leaves on the last N years.
+      const years = Math.round(num(P, 'growYears')); const ly = Math.round(num(P, 'leafYears'));
+      if (ly > 0) {
+        const i = chain.findIndex((n) => n !== fork && n.year >= years - ly);
+        line.youngFrom = i < 0 ? 1 : line.len[i] / Math.max(1e-6, line.length);
+      }
       lines.push(line); ev.lines.push(line);
       chain.forEach((n, i) => {
         if (n === fork) return;

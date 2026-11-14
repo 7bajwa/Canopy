@@ -322,6 +322,12 @@ const growth = tag('growth', 'path', [
   section('_growBuds', 'Bud placement', { ...G }),
   nb('favorUp', 'Favor up', 0, { min: -1, max: 1, ...G }),
   nb('favorSides', 'Favor sides', 0, { min: -1, max: 1, ...G }),
+  section('_growCuts', 'Cuts', { ...G }),
+  nb('cutTop', 'Max height', 0, { unit: 'cm', min: 0, ...G, hint: '0: no limit. Shoots stop at this height above the base, like a hedge or a pruned crown.' }),
+  nb('cutSpread', 'Max spread', 0, { unit: 'cm', min: 0, ...G, hint: '0: no limit. Nothing grows farther than this from the trunk.' }),
+  nb('cutClear', 'Clear trunk', 0, { unit: 'cm', min: 0, ...G, hint: 'No side branches below this height: a cleared trunk, as in a park or an orchard.' }),
+  section('_growLeaves', 'Leaves', { ...G }),
+  int('leafYears', 'Leaves on the last years', 0, { min: 0, max: 40, sock: false, ...G, hint: '0: children grow along the whole branch. Above 0: only on wood that grew in the last N years, so old limbs stay bare and leaves crowd the outside.' }),
   int('growMax', 'Max nodes', 6000, { min: 100, max: 200000, sock: false, ...G, hint: 'A cap on the size: each node is one internode of branch.' }),
 ]);
 
@@ -337,7 +343,7 @@ const wind = (leaves) => tag('wind', 'path', [
 
 export const unifiedDefs = [
   {
-    type: 'Spline', title: 'Spline', cat: 'plant', tabs: ['spline', 'growth', 'place', 'mesh', 'material', 'wind'],
+    type: 'Spline', title: 'Spline', cat: 'plant', tabs: ['spline', 'place', 'mesh', 'material', 'wind', 'growth'],
     desc: 'One complete part of a plant: a line, where it starts, what wraps it, how it looks and how it moves. Connect a parent to grow it from another Spline or Mesh.',
     in: [{ k: 'parent', kind: 'parent', side: 'left', also: ['object'], multi: true, l: 'Parent' }],
     out: [{ k: 'children', kind: 'parent', side: 'right', l: 'Children' }],
