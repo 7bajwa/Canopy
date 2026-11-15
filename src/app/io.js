@@ -121,7 +121,7 @@ export function parseDocument(text) {
 // them through its own host.
 export async function readSample(name) {
   if (window.canopyApp?.readSample) return window.canopyApp.readSample(name);
-  const r = await fetch(`./samples/${encodeURIComponent(name)}`);
+  const r = await fetch(`./samples/${name.split('/').map(encodeURIComponent).join('/')}`);
   if (!r.ok) throw new Error(`${name} is missing`);
   return r.text();
 }

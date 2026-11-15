@@ -9,6 +9,12 @@ import { meshCutout } from '../leaf/cutout.js';
 import { rotateNormal } from '../leaf/imgops.js';
 import { sproutFromPixels } from './sprout.js';
 import { EXPORT_DEFAULTS, exportFields, saveMaps, fold, sizeOf, withDefaults } from './texout.js';
+import { rotateUv } from '../engine/tube.js';
+import { meshKinds } from '../engine/expand.js';
+import { snapBar, snapOn, snapTo, TURN_STEP, SCALE_STEP } from './snap.js';
+
+// Piece middles snap to 32 steps across the sheet's height.
+const PACK_STEP = 1 / 32;
 
 const inPoly = (poly, x, y) => {
   let inside = false;
@@ -49,10 +55,66 @@ export function place(it, [px, py], S = 1) {
   return [(it.cx + x * c - y * s) * S, (it.cy + x * s + y * c) * S];
 }
 
+// A tube's UV at a (0..1 around) and b (0..1 along one repeat), as tube.js lays it out on Spline nodes; `wrap` is
+// how many tileU fit round (2 on old tubes with Even texel size off, else 1). shortcut: Twist and the tile range are left out, fine for a box.
+export function tubeUv(P, a, b, wrap = P.uvMatch === false ? 2 : 1) {
+  const fixU = P.uvFix === 'U';
+  const u = (P.flipU ? -1 : 1) * (fixU ? 1 : (+P.tileU || 1) * wrap) * a + (+P.offsetU || 0);
+  const v = (P.flipV ? -1 : 1) * (P.uvFix === 'V' ? 1 : +P.tileV || 1) * b + (+P.offsetV || 0);
+  const uv = [u, v];
+  rotateUv(uv, 0, 1, +P.uvAngle || 0);
+  return uv;
+}
+
+// The tube's box on its picture, in source pixels (v up, pixels down), as the four corners of one tile.
+export const tubeRectPx = (P, tw, th, wrap = P.uvMatch === false ? 2 : 1) => [[0, 0], [1, 0], [1, 1], [0, 1]].map(([a, b]) => { const [u, v] = tubeUv(P, a, b, wrap); return [u * tw, (1 - v) * th]; });
+
+// The UV map of a packed tube piece: old picture (tw by th pixels) to the sheet `aspect` wide.
+export const sheetMap = (it, tw, th, aspect) => ([u, v]) => { const [x, y] = place(it, [u * tw, (1 - v) * th]); return [x / aspect, 1 - y]; };
+
+// New UV params so the tube reads the same texels where T moved them: scale and turn from where its U and V
+// edges go, offsets solved last. shortcut: exact when T keeps right angles (square picture and sheet), otherwise close.
+export function remapTubeUv(P, T, wrap = P.uvMatch === false ? 2 : 1) {
+  const d = (p, q) => [q[0] - p[0], q[1] - p[1]];
+  const F = (Q, a, b) => tubeUv(Q, a, b, wrap);
+  const o0 = F(P, 0, 0); const eA = d(o0, F(P, 1, 0));
+  const o = T(o0); const dA = d(o, T(F(P, 1, 0))); const dB = d(o, T(F(P, 0, 1)));
+  // Fit U or V can't scale, so the piece gets plain tiles that cover the same: V once along the line is Tile V without distance.
+  const q = { ...P, tileU: Math.hypot(...dA) / wrap, tileV: Math.hypot(...dB), uvFix: 'none' };
+  if (P.uvFix === 'V') q.absLength = false;
+  const turn = (Math.atan2(dA[1], dA[0]) - Math.atan2(eA[1], eA[0])) * (180 / Math.PI);
+  const wrapDeg = (x) => ((((x + 180) % 360) + 360) % 360) - 180;
+  const at = (deg) => { const z = { ...q, uvAngle: wrapDeg((+P.uvAngle || 0) + deg), offsetU: 0, offsetV: 0 }; const e = d(F(z, 0, 0), F(z, 1, 0)); return [z, Math.hypot(e[0] - dA[0], e[1] - dA[1])]; };
+  // Whichever way the engine turns, the sign that lands U on its new edge wins.
+  const [p1, e1] = at(turn); const [p2, e2] = at(-turn);
+  const z = e1 <= e2 ? p1 : p2;
+  const f = (x, y) => F({ ...z, offsetU: x, offsetV: y }, 0, 0);
+  const z0 = f(0, 0); const ex = d(z0, f(1, 0)); const ey = d(z0, f(0, 1)); const r = d(z0, o);
+  const det = ex[0] * ey[1] - ex[1] * ey[0] || 1;
+  return { ...(P.uvFix === 'V' ? { absLength: false } : {}), tileU: z.tileU, tileV: z.tileV, uvAngle: z.uvAngle, uvFix: 'none', offsetU: (r[0] * ey[1] - r[1] * ey[0]) / det, offsetV: (ex[0] * r[1] - ex[1] * r[0]) / det };
+}
+
+// Which material a node's tube reads: its own tube material when it has leaves beside it.
+export const tubeMatKey = (P) => (meshKinds(P).length > 1 && P.tubeMaterial ? 'tubeMaterial' : 'material');
+const hasTube = (n) => meshKinds(n.params || {}).includes('tube');
+const dims = (img) => [img.naturalWidth || img.width || 1, img.naturalHeight || img.height || 1];
+const keyOf = (it) => `${it.mat}|${it.tube ? `tube:${it.tube}` : it.cut}`;
+
 function bounds(pts) {
   let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
   for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
   return [x0, y0, x1, y1];
+}
+
+// A cutout shows its picture once; a tube's box repeats it, as the tube does.
+function drawSource(g, img, it, cut, tw, th) {
+  if (!it.tube) { g.drawImage(img, 0, 0, tw, th); return; }
+  const pat = g.createPattern(img, 'repeat');
+  const [w, h] = dims(img);
+  pat.setTransform(new DOMMatrix().scale(tw / w, th / h));
+  g.fillStyle = pat;
+  const [x0, y0, x1, y1] = bounds(cut.outlinePx);
+  g.fillRect(x0, y0, x1 - x0, y1 - y0);
 }
 
 // A gray picture of one channel of a map, as a canvas for drawing.
@@ -79,6 +141,7 @@ export class TexturePacker {
     this.sel = -1;
     root.querySelector('[data-close]').addEventListener('click', () => this.close());
     root.querySelector('[data-pack]').addEventListener('click', () => this.packAndSave());
+    root.querySelector('[data-pack]').before(snapBar('pack', ['move', 'turn', 'scale']));
     // A new sheet size reshapes the sheet and lays the pieces out again to fit it.
     this.side.addEventListener('change', async () => {
       if (this.aspect === this.shownAspect) return;
@@ -116,8 +179,19 @@ export class TexturePacker {
     return p;
   }
 
-  // Materials that have cutouts can be packed.
-  get candidates() { return (doc.graph.materials || []).filter((m) => m.texture && m.cutouts?.length); }
+  // Materials that have cutouts, or tubes using them, can be packed.
+  get candidates() { return (doc.graph.materials || []).filter((m) => m.texture && (m.cutouts?.length || this.tubesOf(m).length)); }
+
+  tubesOf(m) { return doc.graph.nodes.filter((n) => hasTube(n) && n.params[tubeMatKey(n.params)] === m.id); }
+
+  // Every piece of a material: its enabled cutouts, then each tube that uses it as a box the size of its UV tile.
+  piecesOf(m) {
+    const img = this.images.get(m.texture);
+    return [
+      ...(m.cutouts || []).filter((x) => x.enabled !== false).map((c, i) => ({ key: `${m.id}|${c.id}`, base: { mat: m.id, cut: c.id }, name: c.name || `Cutout ${i + 1}`, px: c.outlinePx })),
+      ...this.tubesOf(m).map((n) => ({ key: `${m.id}|tube:${n.id}`, base: { mat: m.id, tube: n.id }, name: `${n.name || 'Spline'} tube`, px: img ? tubeRectPx(n.params, ...dims(img)) : null })),
+    ];
+  }
 
   get aspect() { const [W, H] = sizeOf(this.state.settings); return W / H; }
 
@@ -138,15 +212,15 @@ export class TexturePacker {
   // One piece per enabled cutout of the chosen materials; pieces already placed keep their place.
   async sync(repack = false) {
     const s = this.state;
-    const old = new Map(s.items.map((it) => [`${it.mat}|${it.cut}`, it]));
+    const old = new Map(s.items.map((it) => [keyOf(it), it]));
     const items = [];
     let fresh = false;
     for (const m of this.candidates.filter((x) => s.mats.includes(x.id))) {
       if (!this.images.has(m.texture)) this.images.set(m.texture, await textureSource(m.texture, doc.assets));
-      for (const c of m.cutouts.filter((x) => x.enabled !== false && !s.skip?.includes(`${m.id}|${x.id}`))) {
-        const [x0, y0, x1, y1] = bounds(c.outlinePx);
-        const it = old.get(`${m.id}|${c.id}`) || { mat: m.id, cut: c.id, cx: 0.5, cy: 0.5, rot: 0, k: 0 };
-        if (!old.has(`${m.id}|${c.id}`)) fresh = true;
+      for (const p of this.piecesOf(m).filter((x) => x.px && !s.skip?.includes(x.key))) {
+        const [x0, y0, x1, y1] = bounds(p.px);
+        const it = old.get(p.key) || { ...p.base, cx: 0.5, cy: 0.5, rot: 0, k: 0 };
+        if (!old.has(p.key)) fresh = true;
         Object.assign(it, { w: x1 - x0, h: y1 - y0, sc: [(x0 + x1) / 2, (y0 + y1) / 2] });
         items.push(it);
       }
@@ -158,7 +232,10 @@ export class TexturePacker {
 
   partOf(it) {
     const m = doc.graph.materials.find((x) => x.id === it.mat);
-    return { m, c: m?.cutouts.find((x) => x.id === it.cut) };
+    if (!it.tube) return { m, c: m?.cutouts?.find((x) => x.id === it.cut) };
+    const n = doc.graph.nodes.find((x) => x.id === it.tube);
+    const img = m && this.images.get(m.texture);
+    return { m, n, c: n && img ? { name: `${n.name || 'Spline'} tube`, outlinePx: tubeRectPx(n.params, ...dims(img)) } : null };
   }
 
   render() {
@@ -172,16 +249,15 @@ export class TexturePacker {
       const row = el('label', 'field check');
       const box = el('input'); box.type = 'checkbox'; box.checked = s.mats.includes(m.id);
       box.addEventListener('change', async () => { s.mats = box.checked ? [...s.mats, m.id] : s.mats.filter((x) => x !== m.id); await this.sync(); this.render(); this.draw(); });
-      row.append(box, el('span', '', `${m.name} (${m.cutouts.length})`));
+      row.append(box, el('span', '', `${m.name} (${this.piecesOf(m).length})`));
       mats.push(row);
-      // Its cutouts in a list that drops open; all are packed until one is unticked.
+      // Its cutouts and tubes in a list that drops open; all are packed until one is unticked.
       if (!s.mats.includes(m.id)) continue;
-      const cuts = m.cutouts.filter((x) => x.enabled !== false);
-      const skipped = cuts.filter((c) => s.skip?.includes(`${m.id}|${c.id}`)).length;
+      const cuts = this.piecesOf(m);
+      const skipped = cuts.filter((c) => s.skip?.includes(c.key)).length;
       const drop = el('details', 'pack-cuts');
-      drop.append(el('summary', '', `Cutouts: ${cuts.length - skipped} of ${cuts.length}`));
-      cuts.forEach((c, i) => {
-        const key = `${m.id}|${c.id}`;
+      drop.append(el('summary', '', `Pieces: ${cuts.length - skipped} of ${cuts.length}`));
+      cuts.forEach(({ key, name }) => {
         const line = el('label', 'field check');
         const tick = el('input'); tick.type = 'checkbox'; tick.checked = !s.skip?.includes(key);
         tick.addEventListener('change', async () => {
@@ -189,7 +265,7 @@ export class TexturePacker {
           await this.sync(); this.render(); this.draw();
           this.side.querySelectorAll('.pack-cuts')[[...cands.filter((x) => s.mats.includes(x.id))].indexOf(m)]?.setAttribute('open', '');
         });
-        line.append(tick, el('span', '', c.name || `Cutout ${i + 1}`));
+        line.append(tick, el('span', '', name));
         drop.append(line);
       });
       mats.push(drop);
@@ -203,7 +279,7 @@ export class TexturePacker {
       layout.push(el('h4', 'section', c?.name || 'Piece'),
         numberField('Rotation', Math.round((it.rot * 180) / Math.PI), { unit: '°' }, (v) => { it.rot = (v * Math.PI) / 180; this.draw(); }),
         numberField('Scale %', Math.round(it.k * 1e5) / 1e3, { min: 0.001 }, (v) => { it.k = v / 100; this.draw(); }));
-      if (this.deps.editShape) {
+      if (this.deps.editShape && !it.tube) {
         const ed = el('button', 'wide', 'Edit vertices in 3D');
         ed.title = 'Reshape this cutout point by point in 3D, to make it unique; Preserve UVs decides whether the texture stretches with it';
         ed.addEventListener('click', () => { this.close(); this.deps.editShape(it.mat, it.cut); });
@@ -284,9 +360,13 @@ export class TexturePacker {
     const s = this.screen(e); const u = this.toUnit(s);
     if (d.pan) { this.view.x += s[0] - d.pan[0]; this.view.y += s[1] - d.pan[1]; d.pan = s; } else if (d.ring) {
       const it = d.ring;
-      it.rot = d.rot0 + Math.atan2(u[1] - it.cy, u[0] - it.cx) - d.a0;
-      it.k = Math.max(1e-6, d.k0 * (Math.hypot(u[0] - it.cx, u[1] - it.cy) / Math.max(d.d0, 1e-6)));
-    } else if (d.item) { d.item.cx = d.c0[0] + u[0] - d.u[0]; d.item.cy = d.c0[1] + u[1] - d.u[1]; }
+      const rot = d.rot0 + Math.atan2(u[1] - it.cy, u[0] - it.cx) - d.a0; const f = Math.hypot(u[0] - it.cx, u[1] - it.cy) / Math.max(d.d0, 1e-6);
+      it.rot = snapOn('pack', 'turn', e) ? snapTo(rot, TURN_STEP) : rot;
+      it.k = Math.max(1e-6, d.k0 * (snapOn('pack', 'scale', e) ? Math.max(SCALE_STEP, snapTo(f, SCALE_STEP)) : f));
+    } else if (d.item) {
+      const by = (v) => (snapOn('pack', 'move', e) ? snapTo(v, PACK_STEP) : v);
+      d.item.cx = by(d.c0[0] + u[0] - d.u[0]); d.item.cy = by(d.c0[1] + u[1] - d.u[1]);
+    }
     this.draw();
   }
 
@@ -326,7 +406,7 @@ export class TexturePacker {
       c.clip('evenodd');
       if (img) {
         c.translate(it.cx, it.cy); c.rotate(it.rot); c.scale(it.k, it.k); c.translate(-it.sc[0], -it.sc[1]);
-        c.drawImage(img, 0, 0, img.naturalWidth || img.width, img.naturalHeight || img.height);
+        drawSource(c, img, it, cut, ...dims(img));
       }
       c.restore();
       this.outline(c, it, cut);
@@ -382,7 +462,7 @@ export class TexturePacker {
         this.outline(g, it, cut, S);
         g.clip('evenodd');
         g.translate(it.cx * S, it.cy * S); g.rotate(it.rot); g.scale(it.k * S, it.k * S); g.translate(-it.sc[0], -it.sc[1]);
-        if (img) g.drawImage(img, 0, 0, s.tw, s.th); else { g.fillStyle = fill; g.fillRect(0, 0, s.tw, s.th); }
+        if (img) drawSource(g, img, it, cut, s.tw, s.th); else { g.fillStyle = fill; g.fillRect(0, 0, s.tw, s.th); }
         g.restore();
       };
       paint(ctx.color, s.color, m.color || '#ffffff');
@@ -434,7 +514,7 @@ export class TexturePacker {
     if (!packed) return;
     // The new material's cutouts are the pieces, where they now sit; ids map old to new for the plant.
     const ids = new Map();
-    packed.cutouts = s.items.map((it) => {
+    packed.cutouts = s.items.filter((it) => !it.tube).map((it) => {
       const { m, c } = this.partOf(it);
       const T = (p) => place(it, p, S);
       const made = meshCutout({
@@ -452,15 +532,23 @@ export class TexturePacker {
     const used = new Set(s.items.map((it) => it.mat));
     const leaves = doc.graph.nodes.filter((n) => String(n.params?.meshType).split('+').includes('cutout') && used.has(n.params.material));
     // Ticked boxes do the switch and the clean-up straight away, without asking.
-    if (leaves.length && (s.remap ?? true)) {
+    if (s.remap ?? true) {
+      // Tubes read their box where it now sits on the sheet.
+      for (const it of s.items.filter((x) => x.tube)) {
+        const { m, n } = this.partOf(it);
+        const img = m && this.images.get(m.texture);
+        if (!n || !img) continue;
+        Object.assign(n.params, remapTubeUv(n.params, sheetMap(it, ...dims(img), W / S)));
+        n.params[tubeMatKey(n.params)] = packed.id;
+      }
       for (const n of leaves) {
         const old = doc.graph.materials.find((x) => x.id === n.params.material);
-        const picked = n.params.cutoutPick || old.cutouts.map((c) => c.id);
+        const picked = n.params.cutoutPick || (old.cutouts || []).map((c) => c.id);
         const next = picked.map((id) => ids.get(`${old.id}|${id}`)).filter(Boolean);
         n.params.material = packed.id;
         n.params.cutoutPick = next.length ? next : null;
       }
-      const unused = [...used].filter((id) => !doc.graph.nodes.some((n) => n.params?.material === id));
+      const unused = [...used].filter((id) => !doc.graph.nodes.some((n) => n.params?.material === id || n.params?.tubeMaterial === id));
       if (unused.length && s.prune) {
         doc.graph.materials = doc.graph.materials.filter((x) => !unused.includes(x.id));
         s.mats = s.mats.filter((id) => !unused.includes(id));

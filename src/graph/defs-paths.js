@@ -105,7 +105,7 @@ export const pathDefs = [
     ],
   },
   {
-    // The engine side of a Spline with Growth on (engine/growth.js); its settings come from the Spline.
+    // The engine side of a Growth node (engine/growth.js), or of an old Spline with Growth on; its settings come from that node.
     type: 'GrowthPath', title: 'Growth', cat: 'path', hidden: true,
     desc: 'Grows a whole tree from each start point, year by year, by light, shadow and gravity.',
     in: [{ k: 'in', kind: 'spawn', side: 'top', multi: true }],

@@ -211,3 +211,22 @@ export function pick(arr, size, verts) {
   verts.forEach((v, j) => { for (let s = 0; s < size; s++) out[j * size + s] = arr[v * size + s]; });
   return out;
 }
+
+// The Export window's formats, one word each; Blender sends straight to the add-on instead of saving a file.
+export const FORMATS = [['glb', 'GLB'], ['fbx', 'FBX'], ['obj', 'OBJ'], ['usd', 'USD'], ['canopy', 'Canopy'], ['blender', 'Blender']];
+export const exportButton = (format) => (format === 'blender' ? 'Send to Blender' : 'Export');
+// The main file's extension: without packed textures a GLB becomes a .gltf with its .bin beside it.
+export const mainExt = (format, pack) => ({ glb: pack ? 'glb' : 'gltf', fbx: 'fbx', obj: 'obj', usd: 'usda', canopy: 'canopy', blender: 'fbx' })[format];
+
+// For each piece on its own line, the piece it hangs from: the nearest line up the parent chain that has a piece
+// (a leaf goes under its branch, a branch under the trunk), or -1 at the top.
+export function parentsOf(lines, table) {
+  const at = new Map(); lines.forEach((l, i) => { if (l >= 0 && !at.has(l)) at.set(l, i); });
+  const n = table.length / WIND_STRIDE;
+  return lines.map((l) => {
+    if (l < 0) return -1;
+    let p = Math.round(table[l * WIND_STRIDE + 3]);
+    for (let guard = 0; p >= 0 && p < n && !at.has(p) && guard < n; guard++) p = Math.round(table[p * WIND_STRIDE + 3]);
+    const i = at.get(p); return i === undefined || lines[i] === l ? -1 : i;
+  });
+}

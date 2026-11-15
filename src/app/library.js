@@ -31,7 +31,7 @@ export function makeLibrary({ openSample, toast }) {
         const img = el('img'); img.alt = '';
         // The picture beside the file, or the one kept inside it.
         img.addEventListener('error', async () => { try { img.src = JSON.parse(await readSample(s.file)).thumb || ''; } catch { /* no picture */ } }, { once: true });
-        img.src = `./samples/${encodeURIComponent(s.thumb || s.file.replace(/\.canopy$/, '.png'))}`;
+        img.src = `./samples/${(s.thumb || s.file.replace(/\.canopy$/, '.png')).split('/').map(encodeURIComponent).join('/')}`;
         b.append(img, el('span', 'library-name', s.name), el('span', 'library-price', s.price ? `$${s.price}` : 'Free'));
         b.addEventListener('click', () => { root.hidden = true; openSample(s); });
         grid.append(b);

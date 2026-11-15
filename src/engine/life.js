@@ -9,15 +9,32 @@
 //     and yellows them.
 // Each leaf and branch draws its own random number from its line id, so moving a slider changes the plant smoothly
 // instead of reshuffling it.
-import { hash, clamp } from './math.js';
+import { hash, clamp, bakeCurve, sampleCurve } from './math.js';
 import { finishLine } from './line.js';
 
-export const LIFE_DEFAULTS = { on: false, age: 1, season: 0.25, health: 1, levelDelay: 0.14, spread: 0.12, fallen: 0, snow: 0 };
+// Curves: dropCurve is the share of leaves fallen across the year (x = season); leafCurve and growCurve scale leaves
+// and growth across the age range (x = age / 1.5, so 1 sits at two thirds). Corner points keep them straight.
+const C = (x, y) => [x, y, 'c'];
+export const LIFE_CURVES = {
+  dropCurve: { pts: [C(0, 0), C(0.25, 0.06), C(0.42, 0.12), C(0.8, 1), C(0.96, 1), C(1, 0)] },
+  leafCurve: { pts: [C(0, 0.3), C(2 / 3, 1), C(1, 1)] },
+  growCurve: { pts: [C(0, 1), C(1, 1)] },
+};
+export const LIFE_DEFAULTS = { on: false, age: 1, season: 0.25, health: 1, levelDelay: 0.14, spread: 0.12, fallen: 0, snow: 0, leafAmount: 1, leafVary: 0, growAmount: 1 };
 
 export function lifeOf(settings) {
   const L = { ...LIFE_DEFAULTS, ...(settings?.life || {}) };
-  return L.on ? L : null;
+  if (!L.on) return null;
+  const t = Object.fromEntries(Object.keys(LIFE_CURVES).map((k) => [k, bakeCurve(L[k] || LIFE_CURVES[k])]));
+  // Leaf drop by season; leaves kept and growth made, by age (each times its amount).
+  L.dropAt = (s) => clamp(sampleCurve(t.dropCurve, s), 0, 1);
+  L.leafAt = (a) => Math.max(0, +L.leafAmount) * sampleCurve(t.leafCurve, a / 1.5);
+  L.growAt = (a) => Math.max(0.05, +L.growAmount * sampleCurve(t.growCurve, a / 1.5));
+  return L;
 }
+
+// Snow lies only in winter: none from spring to autumn, building up as winter sets in and melting before spring.
+export const snowAt = (life) => (life?.on ? clamp(+life.snow || 0, 0, 1) * smooth(0.68, 0.76, life.season ?? 0.25) * (1 - smooth(0.92, 0.97, life.season ?? 0.25)) : 0);
 
 const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 
@@ -79,20 +96,22 @@ export function lifeLine(L, line, seed) {
     if (r(902) < clamp(1 - L.health, 0, 1) * 0.45) { line.dead = true; return; }
     const ph = r(903);
     line.season = ph;
-    if (ph < dropAt(L.season) * (0.85 + 0.3 * ph)) {
+    if (ph < (L.dropAt ? L.dropAt(L.season) : dropAt(L.season)) * (0.85 + 0.3 * ph)) {
       // Some of the dropped leaves lie on the ground under the plant.
       if (L.fallen > 0 && r(906) < L.fallen) layOnGround(line, r); else line.dead = true;
       return;
     }
-    // A young plant carries fewer leaves.
-    if (r(905) > 0.3 + 0.7 * Math.min(L.age, 1)) { line.dead = true; return; }
+    // Leaf amount by age (a young plant carries fewer leaves), varied twig by twig so the crown is patchy, not even.
+    const vary = 1 - clamp(+L.leafVary || 0, 0, 1) * hash(seed, p?.id ?? line.id, 911);
+    if (r(905) > (L.leafAt ? L.leafAt(L.age) : 0.3 + 0.7 * Math.min(L.age, 1)) * vary) { line.dead = true; return; }
   }
   // Age: each level waits its turn, and along a parent the ones near the base start first. Leaves don't wait for
   // their level: they come with whatever has grown, so even a seedling has a few.
   const A = Math.min(L.age, 1);
   const along = p ? clamp(line.pos || 0, 0, 1) * L.spread : 0;
   const start = Math.min(0.9, leafy ? along * 0.5 : level * L.levelDelay + along);
-  let t = clamp((A - start) / Math.max(0.05, 1 - start), 0, 1);
+  // Growth amount by age speeds up or holds back the growth timing.
+  let t = clamp(((A - start) / Math.max(0.05, 1 - start)) * (leafy || !L.growAt ? 1 : L.growAt(L.age)), 0, 1);
   if (t <= 0.02) {
     // Not its turn yet: some stay as short buds, the closer to their turn the more, so young plants carry leaves.
     if (leafy || r(904) > A / Math.max(start, 1e-3)) { line.dead = true; return; }

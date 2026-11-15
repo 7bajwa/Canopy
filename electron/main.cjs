@@ -71,9 +71,10 @@ ipcMain.handle('canopy:backup', async (e, when, text, docName) => {
 });
 
 ipcMain.handle('canopy:read-sample', async (e, name) => {
-  const file = path.basename(String(name));
-  if (!/^[\w ().-]+\.(canopy|json)$/.test(file)) throw new Error('Not a sample file');
-  return fs.readFile(path.join(__dirname, '..', 'dist', 'samples', file), 'utf8');
+  // A sample, or one in a category folder: Trees/Oak.canopy. Nothing outside the samples folder.
+  const file = String(name);
+  if (!/^([\w ().-]+\/)?[\w ().-]+\.(canopy|json)$/.test(file) || file.includes('..')) throw new Error('Not a sample file');
+  return fs.readFile(path.join(__dirname, '..', 'dist', 'samples', ...file.split('/')), 'utf8');
 });
 
 // Only this project's own release files are downloaded; GitHub redirects them to its file host.

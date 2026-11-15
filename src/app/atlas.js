@@ -1,5 +1,5 @@
 // The leaf cutout editor. It opens on the texture in use: detect leaves or add meshes, then drag points, the pivot and sprouts directly.
-import { contourCutouts } from '../leaf/contour.js';
+import { contourCutouts, redetectCutout } from '../leaf/contour.js';
 import { Cut3D } from './cut3d.js';
 import { fitCutout, cutoutsFromImage, meshAs, leafFromLine, addOutlinePoint, addInnerPoint, removeCutoutPoint } from '../leaf/cutout.js';
 import { doc, setParam, commit, changed } from './doc.js';
@@ -8,6 +8,7 @@ import { atlasPixels, textureSource, textureChoices, atlasChoices } from './text
 import { el, numberField, checkField, selectField } from './fields.js';
 import { sproutFromPixels } from './sprout.js';
 import { readDataUrl, pickFile, downloadText } from './io.js';
+import { snapBar, snapOn, snapTo, TURN_STEP, SCALE_STEP } from './snap.js';
 
 // Auto detect's settings, kept on the material.
 export const detectOpts = (p) => ({
@@ -110,6 +111,8 @@ function arrow(c, a, b, color, k) {
 // Sprout levels: children can grow from one level only. Each has a color, which can be changed.
 const SPROUT_COLORS = ['#5cc8ff', '#ff9f43', '#c56cf0', '#7bed9f', '#ff6b81', '#ffd32a', '#18dcff', '#ffffff', '#a4b0be'];
 const levelColor = (lv) => doc.graph.settings?.sproutColors?.[lv - 1] || SPROUT_COLORS[lv - 1];
+// What a LOD keeps of a mesh: its shape, without who it is.
+const lodShape = ({ id, name, enabled, lods, lod0, lodView, ...rest }) => clone(rest);
 
 const HINT = {
   shape3d: 'Drag a point to move it in 3D; drag anywhere else to turn the view, scroll to zoom. With Preserve UVs on, the texture stretches with the shape; off, the point moves on the picture too.',
@@ -150,14 +153,24 @@ export class AtlasEditor {
     root.addEventListener('click', (e) => { const b = e.target.closest('[data-tool]'); if (b) this.setTool(b.dataset.tool); });
     root.querySelector('[data-fit]').addEventListener('click', () => this.fitView());
     const open = root.querySelector('[data-detect-open]');
-    open.addEventListener('click', () => { this.detectBox.hidden = !this.detectBox.hidden; open.setAttribute('aria-expanded', !this.detectBox.hidden); });
+    open.addEventListener('click', () => this.openDetect(null));
+    // Detects the picked mesh again with new settings, e.g. to make a simpler version of it for a LOD.
+    const redo = el('button', 'mini icon'); redo.dataset.redo = '';
+    redo.title = 'Detect the picked mesh again with new settings; only it changes (also the LOD version shown)'; redo.setAttribute('aria-label', 'Detect the picked mesh again');
+    redo.innerHTML = '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4"/></svg>';
+    redo.addEventListener('click', () => { if (!this.cut) { this.deps.toast('Pick a mesh first, then detect it again.'); return; } this.openDetect(this.cut.id); });
+    open.after(redo);
+    root.querySelector('[data-fit]').before(snapBar('cut', ['move', 'turn', 'scale'], () => this.draw()), el('span', 'atlas-sep'));
     root.querySelector('[data-detect]').addEventListener('click', () => this.runDetect());
     root.querySelector('[data-create]').addEventListener('click', () => this.createFromPreview());
     root.querySelector('[data-clear]').addEventListener('click', () => this.clearAll());
-    const undoBtn = el('button', 'icon'); undoBtn.title = 'Undo (Ctrl+Z)'; undoBtn.setAttribute('aria-label', 'Undo');
+    const undoBtn = el('button', 'mini icon'); undoBtn.title = 'Undo (Ctrl+Z)'; undoBtn.setAttribute('aria-label', 'Undo');
     undoBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M9 7L4 12l5 5M4 12h11a5 5 0 010 10h-3"/></svg>';
     undoBtn.addEventListener('click', () => this.undo());
-    root.querySelector('[data-clear]').before(undoBtn);
+    root.querySelector('[data-clear]').before(el('span', 'atlas-sep'), undoBtn);
+    const lodBtn = el('button', 'mini', 'LOD ▾'); lodBtn.title = 'LODs of the picked mesh: keep a version of it for each LOD'; lodBtn.setAttribute('aria-haspopup', 'menu');
+    lodBtn.addEventListener('click', () => this.lodMenu(lodBtn));
+    root.querySelector('[data-detect-open]').before(lodBtn);
     root.querySelector('[data-export]').addEventListener('click', () => this.exportFile());
     root.querySelector('[data-import]').addEventListener('click', () => this.importFile());
     this.matPick.addEventListener('change', () => {
@@ -188,11 +201,17 @@ export class AtlasEditor {
   }
 
   isOpen() { return !this.root.hidden; }
+  // Pixels per grid step for snapping: 64 steps across the picture.
+  gridStep() { return Math.max(1, Math.round(Math.max(this.pixels?.width || 1, this.pixels?.height || 1) / 64)); }
   get cuts() { return this.node.params.cutouts || []; }
   get cut() { return this.cuts[this.active]; }
 
   // Works on a material: its texture and the cutouts that belong to it. A shim keeps the old node-shaped access.
-  put(k, v) { this.node.params[k] = clone(v); changed({ layout: true }); }
+  put(k, v) {
+    // A LOD version on show is kept in its slot as it is edited.
+    if (k === 'cutouts') v = v.map((c) => (c.lodView ? { ...c, lods: Object.assign([...(c.lods || [])], { [c.lodView]: lodShape(c) }) } : c));
+    this.node.params[k] = clone(v); changed({ layout: true });
+  }
 
   // The editor's own undo: each saved change keeps a copy of the cutouts as they were after it.
   record() {
@@ -226,6 +245,8 @@ export class AtlasEditor {
     this.root.hidden = false;
     this.active = -1;
     this.preview = null;
+    this.lodShown = null;
+    this.redoId = null;
     this.detectBox.hidden = true;
     this.setTool(this.tool || 'select');
     this.fillMaterials();
@@ -238,6 +259,8 @@ export class AtlasEditor {
   close() {
     this.root.hidden = true;
     this.renameBox?.remove();
+    // Leaves every mesh showing LOD0 again, so the rest of the app sees the full meshes.
+    if (this.cuts.some((c) => c.lodView)) this.put('cutouts', this.cuts.map((c) => (c.lodView ? this.lodSwap(c, 0) : c)));
     this.record();
     this.deps.onClose?.();
   }
@@ -259,14 +282,28 @@ export class AtlasEditor {
   async loadAtlas() {
     const { node } = this;
     const m = node.params;
-    this.image = await textureSource(m.texture, doc.assets);
-    this.pixels = await materialPixels(m);
-    // What can show behind the meshes: the color picture, the normal map, and the opacity as gray.
-    const op = document.createElement('canvas');
-    op.width = this.pixels.width; op.height = this.pixels.height;
-    const g = op.getContext('2d'); const d = g.createImageData(op.width, op.height);
-    for (let i = 0; i < d.data.length; i += 4) { const v = this.pixels.data[i + 3]; d.data[i] = v; d.data[i + 1] = v; d.data[i + 2] = v; d.data[i + 3] = 255; }
-    g.putImageData(d, 0, 0);
+    const pix = m.texture ? await materialPixels(m).catch(() => null) : null;
+    // Without a picture the meshes are drawn by hand on a blank sheet, as big as the one they were made on.
+    this.blank = !pix;
+    let op = null;
+    if (this.blank) {
+      const W = this.cuts[0]?.width || 1024; const H = this.cuts[0]?.height || W;
+      this.pixels = { width: W, height: H, data: new Uint8ClampedArray(W * H * 4) };
+      this.image = document.createElement('canvas');
+      this.image.width = W; this.image.height = H;
+      const g = this.image.getContext('2d'); g.fillStyle = '#26301f'; g.fillRect(0, 0, W, H);
+    } else {
+      this.pixels = pix;
+      this.image = await textureSource(m.texture, doc.assets);
+      // What can show behind the meshes: the color picture, the normal map, and the opacity as gray.
+      op = document.createElement('canvas');
+      op.width = pix.width; op.height = pix.height;
+      const g = op.getContext('2d'); const d = g.createImageData(op.width, op.height);
+      for (let i = 0; i < d.data.length; i += 4) { const v = pix.data[i + 3]; d.data[i] = v; d.data[i + 1] = v; d.data[i + 2] = v; d.data[i + 3] = 255; }
+      g.putImageData(d, 0, 0);
+    }
+    for (const b of this.root.querySelectorAll('[data-detect-open], [data-redo]')) b.disabled = this.blank;
+    if (this.blank) this.detectBox.hidden = true;
     const map = async (k) => (m[k] ? textureSource(m[k], doc.assets) : null);
     this.bgImages = { albedo: this.image, normal: await map('normalMap'), opacity: op, roughness: await map('roughMap'), ao: await map('aoMap'), subsurface: await map('sssMap') };
     if (!this.bgImages[this.bg]) this.bg = 'albedo';
@@ -292,7 +329,7 @@ export class AtlasEditor {
   // The materials with a picture; picking one switches the editor (and the material editor) to it.
   fillMaterials() {
     this.matPick.replaceChildren();
-    for (const m of (doc.graph.materials || []).filter((x) => x.texture)) { const o = el('option', '', m.name); o.value = m.id; this.matPick.append(o); }
+    for (const m of (doc.graph.materials || []).filter((x) => x.texture || x === this.material)) { const o = el('option', '', m.name); o.value = m.id; this.matPick.append(o); }
     this.matPick.value = this.material.id;
   }
 
@@ -328,16 +365,55 @@ export class AtlasEditor {
   }
 
   // ---- Auto detect shows first, and only joins the list on Create. ----
-  runDetect() {
-    this.preview = contourCutouts(this.pixels, detectOpts(this.node.params));
-    this.root.querySelector('[data-create]').disabled = !this.preview.length;
-    if (!this.preview.length) this.deps.toast('No leaves found. Lower the opacity threshold, or add a mesh by hand.');
+  // id: detect again inside that one mesh only, replacing it on Create; null: the whole picture.
+  openDetect(id) {
+    const box = this.detectBox;
+    const same = !box.hidden && this.redoId === id;
+    this.redoId = id;
+    this.preview = null;
+    box.hidden = same || this.blank;
+    const c = this.cuts.find((x) => x.id === id);
+    box.querySelector('h4').textContent = c ? `Detect ${c.name || 'mesh'} again` : 'Auto detect';
+    const make = this.root.querySelector('[data-create]');
+    make.textContent = c ? 'Replace' : 'Create'; make.disabled = true;
+    make.title = c ? 'Replaces the picked mesh with what was found. Other meshes stay.' : 'Adds what was found. Meshes you have stay.';
+    this.root.querySelector('[data-detect-open]').setAttribute('aria-expanded', !box.hidden && !c);
     this.draw();
   }
 
-  // What was found joins the meshes already there; none of them is replaced.
+  runDetect() {
+    if (this.blank) return;
+    const o = detectOpts(this.node.params);
+    if (this.redoId) {
+      const c = this.cuts.find((x) => x.id === this.redoId);
+      const r = c && redetectCutout(this.pixels, c, o);
+      if (r) r.sprouts = (r.sprouts || []).map((s) => sproutFromPixels(r, s.px, s.dir, s.level));
+      this.preview = r ? [r] : [];
+    } else this.preview = contourCutouts(this.pixels, o);
+    this.root.querySelector('[data-create]').disabled = !this.preview.length;
+    if (!this.preview.length) this.deps.toast(this.redoId ? 'Nothing found inside this mesh. Lower the opacity threshold.' : 'No leaves found. Lower the opacity threshold, or add a mesh by hand.');
+    this.draw();
+  }
+
+  // What was found joins the meshes already there; none of them is replaced. Detecting one mesh again replaces
+  // only it, and the LOD version on show too.
   createFromPreview() {
     if (!this.preview?.length) return;
+    if (this.redoId) {
+      const i = this.cuts.findIndex((x) => x.id === this.redoId);
+      if (i < 0) return;
+      const old = this.cuts[i];
+      const made = { ...this.preview[0], lodView: old.lodView, lod0: old.lod0 };
+      const k = made.lodView || -1;
+      this.put('cutouts', this.cuts.map((x, j) => (j === i ? made : x)));
+      this.preview = null;
+      this.root.querySelector('[data-create]').disabled = true;
+      this.active = i;
+      this.draw();
+      this.record();
+      if (k >= 0) this.deps.toast(`LOD${k} keeps this new version.`);
+      return;
+    }
     const kept = this.cuts;
     const made = this.preview.map((c, i) => ({ ...c, name: `Leaf ${kept.length + i + 1}` }));
     this.put('cutouts', [...kept, ...made]);
@@ -551,6 +627,52 @@ export class AtlasEditor {
     this.menuAway = away;
   }
 
+  // Mesh c with LOD k's version on show (a LOD without one starts as a copy of LOD0); LOD0 waits in lod0 meanwhile.
+  lodSwap(c, k) {
+    const cur = c.lodView || 0; const live = lodShape(c);
+    const lods = [...(c.lods || [])]; const full = cur ? clone(c.lod0) : live;
+    if (cur) lods[cur] = live;
+    const next = k ? (lods[k] ||= clone(full)) : full;
+    const clear = Object.fromEntries(Object.keys(live).map((x) => [x, undefined]));
+    return { ...c, ...clear, ...clone(next), lods, lod0: k ? full : undefined, lodView: k || undefined };
+  }
+
+  // ---- LODs: c.lods[k] is the picked mesh's own shape for LOD k; a LOD without one uses the mesh as it is. ----
+  lodMenu(btn) {
+    this.closeMenu();
+    const c = this.cut;
+    if (!c) { this.deps.toast('Pick a mesh first, then keep versions of it for the LODs.'); return; }
+    const m = el('div', 'sprout-menu');
+    m.setAttribute('role', 'menu');
+    const r = btn.getBoundingClientRect();
+    m.style.left = `${r.left}px`; m.style.top = `${r.bottom + 6}px`;
+    const shape = lodShape;
+    const n = Math.max(1, Math.min(8, Math.round(+doc.lods || 4)));
+    for (let k = 0; k < n; k++) {
+      const own = c.lods?.[k];
+      const row = el('div', '');
+      row.style.cssText = 'display:flex;align-items:center;gap:6px';
+      const put = el('button', 'mini icon', '▶'); put.title = `Use the mesh as it is now for LOD${k}`; put.setAttribute('aria-label', put.title);
+      put.addEventListener('click', () => {
+        const lods = [...(c.lods || [])]; lods[k] = shape(c);
+        this.closeMenu(); this.update(this.active, { lods }); this.deps.toast(`LOD${k} now has its own version of this mesh.`);
+      });
+      const shown = (c.lodView || 0) === k;
+      const show = el('button', `menu-item${shown ? ' on' : ''}`, `LOD${k}${k && !own ? ' (same mesh)' : ''}${shown ? ' · shown' : ''}`);
+      show.title = k ? `Show LOD${k}'s version here to edit it; LOD0 is kept` : 'Show the full mesh (LOD0) again';
+      show.style.flex = '1'; show.style.textAlign = 'left';
+      show.addEventListener('click', () => { this.closeMenu(); if (!shown) this.update(this.active, this.lodSwap(c, k)); });
+      row.append(put, show);
+      m.append(row);
+    }
+    document.body.append(m);
+    this.menu = m;
+    const away = (e) => { if (!m.contains(e.target)) this.closeMenu(); };
+    m.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); this.closeMenu(); } });
+    setTimeout(() => document.addEventListener('pointerdown', away, { capture: true }), 0);
+    this.menuAway = away;
+  }
+
   closeMenu() {
     if (!this.menu) return;
     this.menu.remove();
@@ -616,7 +738,7 @@ export class AtlasEditor {
     if (data.asset?.url && typeof data.asset.url === 'string' && data.asset.url.startsWith('data:image/')) doc.assets[data.atlas] = { name: String(data.asset.name || 'Imported'), url: data.asset.url };
     if (typeof data.atlas === 'string' && textureSource(data.atlas, doc.assets)) {
       this.put('texture', data.atlas);
-      this.fillSource();
+      this.fillMaterials();
       await this.loadAtlas();
     }
     this.put('cutouts', [...this.cuts, ...list.map((c) => this.remesh(c))]);
@@ -839,7 +961,11 @@ export class AtlasEditor {
       if (d.moved) { this.view.x += s[0] - d.pan[0]; this.view.y += s[1] - d.pan[1]; d.pan = s; this.draw(); }
       return;
     }
-    const [x, y] = this.toImage(e);
+    // Snapping: single points land on the grid; whole meshes and picked groups move by whole grid steps.
+    const step = this.gridStep(); const ms = snapOn('cut', 'move', e);
+    const raw = this.toImage(e);
+    const [x, y] = ms && (d.point || d.sproutMove !== undefined || d.line) ? raw.map((v) => snapTo(v, step)) : raw;
+    const by = (v) => (ms ? snapTo(v, step) : v);
     if (d.pending) {
       if (Math.hypot(s[0] - d.at[0], s[1] - d.at[1]) < 5) return;
       this.drag = { marquee: [d.start[0], d.start[1], x, y] };
@@ -851,15 +977,16 @@ export class AtlasEditor {
       if (!d.moved && Math.hypot(x - d.start[0], y - d.start[1]) * this.view.k < 3) return;
       d.moved = true;
       const pts = this.allPoints();
-      for (const q of d.group) pts.find((o) => o.k === q.k)?.set([q.from[0] + x - d.start[0], q.from[1] + y - d.start[1]]);
+      for (const q of d.group) pts.find((o) => o.k === q.k)?.set([q.from[0] + by(x - d.start[0]), q.from[1] + by(y - d.start[1])]);
       this.node.params.cutouts[this.active] = this.remesh(this.cut);
       this.draw();
       return;
     }
     if (d.xform) {
+      const a = Math.atan2(y - d.pivot[1], x - d.pivot[0]) - d.a0; const f = Math.hypot(x - d.pivot[0], y - d.pivot[1]) / Math.max(d.d0, 1e-3);
       const o = d.turn
-        ? { a: Math.atan2(y - d.pivot[1], x - d.pivot[0]) - d.a0, f: Math.max(0.05, Math.hypot(x - d.pivot[0], y - d.pivot[1]) / Math.max(d.d0, 1e-3)) }
-        : { dx: x - d.start[0], dy: y - d.start[1] };
+        ? { a: snapOn('cut', 'turn', e) ? snapTo(a, TURN_STEP) : a, f: Math.max(0.05, snapOn('cut', 'scale', e) ? snapTo(f, SCALE_STEP) : f) }
+        : { dx: by(x - d.start[0]), dy: by(y - d.start[1]) };
       d.moved = true;
       this.node.params.cutouts[this.active] = this.transformed(d.xform, d.pivot, o);
       this.draw();
@@ -991,6 +1118,14 @@ export class AtlasEditor {
     c.drawImage(this.bgImages?.[this.bg] || image, 0, 0, pixels.width, pixels.height);
     c.strokeStyle = 'rgba(255,255,255,.25)'; c.lineWidth = 1 / k;
     c.strokeRect(0, 0, pixels.width, pixels.height);
+    if (snapOn('cut', 'move')) {
+      // The snap grid, thinned out when zoomed far out.
+      let g = this.gridStep(); while (g * k < 6) g *= 4;
+      c.strokeStyle = 'rgba(255,255,255,.1)'; c.beginPath();
+      for (let x = g; x < pixels.width; x += g) { c.moveTo(x, 0); c.lineTo(x, pixels.height); }
+      for (let y = g; y < pixels.height; y += g) { c.moveTo(0, y); c.lineTo(pixels.width, y); }
+      c.stroke();
+    }
     this.cuts.forEach((cut, i) => this.drawMesh(c, cut, i === this.active, false));
     for (const cut of this.preview || []) this.drawMesh(c, cut, false, true);
     const cut = this.cut;

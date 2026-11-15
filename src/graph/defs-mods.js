@@ -11,18 +11,18 @@ const modifier = (type, title, params, o = {}) => ({
 });
 
 export const modDefs = [
-  modifier('Dir_Random', 'Random direction', [
+  modifier('Dir_Random', 'Random', [
     num('smoothing', 'Smoothing', 100, { unit: 'cm', min: 0.1, n: 1 }),
     num('min', 'Min angle', 0, { unit: '°', n: 1 }),
     num('max', 'Max angle', 25, { unit: '°', n: 1, c: 1 }),
   ], { after: true, desc: 'Bends each line in its own random direction.' }),
-  modifier('Dir_Vector', 'Vector direction', [
+  modifier('Dir_Vector', 'Vector', [
     en('source', 'Vector source', 'global', ['global', 'local', 'point', 'surface'], { n: 1 }),
     vec('vector', 'Vector / target', [0, 1, 0], { sock: false }),
     en('mode', 'Orientation', 'vector', ['vector', 'horizontal']),
     num('strength', 'Strength', 0.4, { n: 1, c: 1 }),
   ], { after: true, in: [objectIn], desc: 'Turns lines toward a direction, a point or a surface. Use it for gravity and for reaching to the light.' }),
-  modifier('Dir_Noise', 'Noise direction', [
+  modifier('Dir_Noise', 'Noise', [
     num('scale', 'Scale', 80, { unit: 'cm', min: 0.1, n: 1 }),
     num('phase', 'Phase', 0),
     int('seed', 'Random seed', 0),
@@ -32,29 +32,29 @@ export const modDefs = [
     int('iter', 'Iterations', 3, { min: 1, max: 10 }),
     bool('shift', 'Shift start point', false),
   ], { after: true, desc: 'Adds an organic wobble along each line.' }),
-  modifier('Dir_Deviation', 'Deviation direction', [
-    bool('fromChild', 'Angle from child vector', true),
-    num('angle', 'Angle', 15, { unit: '°', n: 1 }),
-    num('tolerance', 'Tolerance', 5, { unit: 'cm', min: 0 }),
-  ], { desc: 'Kinks the parent away from each child where it grows, the way real wood zigzags at its forks.' }),
-  modifier('Dir_Spline', 'Spline direction', [
-    crv('shapeA', 'Shape A', { pts: [[0, 0.5, 's'], [0.5, 0.8, 's'], [1, 0.3, 's']] }),
-    crv('shapeB', 'Shape B', { pts: [[0, 0.5, 's'], [0.5, 0.2, 's'], [1, 0.7, 's']] }),
+  modifier('Dir_Deviation', 'Deviation', [
+    bool('fromChild', 'Angle from child vector', false, { hint: 'Kinks more toward children that leave at a wide angle.' }),
+    num('angle', 'Angle', 15, { unit: '°', n: 1, when: { fromChild: false } }),
+    num('spread', 'Spread', 20, { unit: 'cm', min: 1, hint: 'How much of the line around each child moves.' }),
+  ], { desc: 'Kinks the line out toward each child, the way real wood zigzags at its forks.' }),
+  modifier('Dir_Spline', 'Warp', [
+    crv('shapeA', 'Shape A', { pts: [[0, 0.5, 's'], [0.5, 0.8, 's'], [1, 0.3, 's']] }, { hint: 'The bend to the side (X), from base (left) to tip (right): higher than at the start bends one way, lower the other.' }),
+    crv('shapeB', 'Shape B', { pts: [[0, 0.5, 's'], [0.5, 0.2, 's'], [1, 0.7, 's']] }, { hint: 'The bend in Z, the other way across the line.' }),
     num('orient', 'Orientation', 0, { unit: '°', n: 1 }),
     num('orientChaos', 'Variation angle', 0, { unit: '°' }),
     num('scale', 'Scale', 1, { min: 0, n: 1 }),
     num('scaleChaos', 'Variation scale %', 0, { min: 0, max: 100 }),
-    num('blend', 'Interpolation value', 0, { min: 0, max: 1 }),
-  ], { desc: 'Makes lines follow a drawn profile, blending between two shapes.' }),
+  ], { desc: 'Bends lines along two drawn profiles: Shape A to the side, Shape B in Z.' }),
   modifier('Dir_Droop', 'Droop', [
-    num('strength', 'Strength', 1, { min: 0, max: 5, n: 1 }),
+    num('strength', 'Strength', 1, { min: 0, max: 100, n: 1 }),
     num('stiffness', 'Stiffness', 300, { unit: 'cm', min: 1, n: 1, hint: 'Longer lines than this sag more, shorter ones less.' }),
-  ], { desc: 'Sags under its own weight: most at the base, where the most line hangs beyond, so long branches and fronds arch over.' }),
+  ], { desc: 'Sags under its own weight like a real branch: long and thin parts sag most, and the tip hangs down.' }),
   modifier('Dir_HardBend', 'Hard bend', [
     num('position', 'Position %', 50, { min: 0, max: 100, n: 1 }),
     num('posChaos', 'Variation position %', 0, { min: 0, max: 100 }),
     num('angle', 'Angle', 40, { unit: '°', n: 1 }),
     num('angleChaos', 'Variation angle', 0, { unit: '°' }),
+    num('smooth', 'Smoothness', 0, { unit: 'cm', min: 0, hint: '0 makes a sharp corner; higher rounds the bend over this length.' }),
     num('orient', 'Orientation', 0, { unit: '°' }),
     num('applyStrength', 'Apply vector strength', 0),
     vec('applyVector', 'Apply vector', [0, -1, 0], { sock: false }),
@@ -67,24 +67,34 @@ export const modDefs = [
     vec('dir', 'Wind direction', [1, 0, 0.3], { sock: false }),
     num('flutter', 'Leaf flutter', 1.5, { min: 0 }),
   ], { after: true, desc: 'Sways the mesh live in the viewport. It costs almost nothing because it runs on the graphics chip.' }),
+  modifier('Dir_Curl', 'Curl', [
+    num('turns', 'Turns', 1, { n: 1, c: 1, hint: 'How many full turns the line curls; below 0 it curls the other way. The curve sets where along the line it curls.' }),
+    num('tighten', 'Tighten %', 60, { min: 0, max: 100, hint: 'Curls tighter toward the tip, like a fern bud.' }),
+    en('axis', 'Axis', 'side', ['side', 'x', 'y', 'z'], { hint: 'Side curls across the line itself; X, Y and Z curl around a world axis.' }),
+    num('orient', 'Direction', 0, { unit: '°', n: 1, when: { axis: 'side' }, hint: 'Which way around the line it curls.' }),
+    num('orientChaos', 'Variation direction', 0, { unit: '°', when: { axis: 'side' } }),
+  ], { desc: 'Curls the line in on itself, tighter toward the tip.' }),
   modifier('Dir_Copy', 'Copy direction', [num('radial', 'Radial offset', 0, { unit: 'cm', n: 1, c: 1 })],
-    { desc: 'Makes a line follow the shape of its parent, like a vine.' }),
+    { retired: true, desc: 'Makes a line follow the shape of its parent, like a vine.' }),
   modifier('Dir_AlignChildren', 'Align children', [num('amount', 'Amount %', 100, { min: 0, max: 100, n: 1 })],
-    { desc: 'Keeps child lines straight on a strongly curved parent. Place it before modifiers that curve the line.' }),
-  modifier('Dir_Radial', 'Radial direction', [
-    num('smoothing', 'Smoothing', 100, { unit: 'cm', min: 0.1, n: 1 }),
+    { retired: true, desc: 'Keeps child lines straight on a strongly curved parent. Place it before modifiers that curve the line.' }),
+  modifier('Dir_Radial', 'Radial', [
+    num('smoothing', 'Bend length', 100, { unit: 'cm', min: 0.1, n: 1, hint: 'It bends by Angle over every this much of the line, all the way to the tip.' }),
     num('angle', 'Angle bend', 45, { unit: '°', n: 1, c: 1 }),
     num('orient', 'Orientation', 0, { unit: '°', n: 1 }),
-  ], { after: true, desc: 'Curls each line in a set direction.' }),
-  modifier('Dir_Spiral', 'Spiral direction', [
+  ], { after: true, desc: 'Rolls each line in a set direction along its whole length.' }),
+  modifier('Dir_Spiral', 'Spiral', [
     num('radius', 'Radius', 15, { unit: 'cm', n: 1, c: 1 }),
     num('turn', 'Turn angle', 360, { unit: '°', n: 1 }),
-  ], { desc: 'Coils the line around its own direction.' }),
-  modifier('Dir_Zigzag', 'Zigzag direction', [
-    num('radius', 'Radius', 6, { unit: 'cm', n: 1 }),
+    en('axis', 'Axis', 'line', ['line', 'x', 'y', 'z'], { hint: 'Line coils around its own direction; X, Y and Z coil around a world axis.' }),
+  ], { desc: 'Coils the line around its own direction or a world axis.' }),
+  modifier('Dir_Zigzag', 'Zigzag', [
+    num('angle', 'Angle', 25, { unit: '°', min: 0, max: 85, n: 1, c: 1, hint: 'How sharply each step turns off the line.' }),
+    num('angleChaos', 'Variation angle', 0, { unit: '°', min: 0 }),
     num('steps', 'Steps', 25, { unit: 'cm', min: 0.5, n: 1 }),
+    en('axis', 'Axis', 'x', ['x', 'y'], { hint: 'Which side of the line it zigzags to.' }),
   ], { desc: 'Alternates the line from side to side.' }),
-  modifier('Dir_Twist', 'Twist direction', [num('angle', 'Angle', 90, { unit: '°', n: 1, c: 1 })],
+  modifier('Dir_Twist', 'Twist', [num('angle', 'Angle', 90, { unit: '°', n: 1, c: 1 })],
     { after: true, desc: 'Rolls the mesh around the line.' }),
   modifier('Dir_ObjReact', 'Object reaction', [
     bool('reflect', 'Reflection', true), num('reflectDist', 'Reflection distance', 40, { unit: 'cm', n: 1 }),
@@ -99,10 +109,9 @@ export const modDefs = [
   ], { retired: 'Avoid intersections', after: true, desc: 'Lines of this path push apart or pull together, which stops them crossing.' }),
   modifier('Dir_ObjSlice', 'Object slice', [
     num('distance', 'Distance', 0, { unit: 'cm', n: 1 }),
-    bool('keepLength', 'No affect length', true),
     en('capEnd', 'Cap end override', 'none', caps),
     bool('erase', 'Erase the affected lines', false),
-  ], { in: [objectIn], desc: 'Cuts lines where they meet a scene object, to trim a plant to a shape.' }),
+  ], { retired: true, in: [objectIn], desc: 'Cuts lines where they meet a scene object, to trim a plant to a shape.' }),
   modifier('Dir_Collide', 'Collide', [
     en('target', 'With', 'floor', ['floor', 'object'], { hint: 'The floor at Height, or a scene object (an imported mesh) connected here.' }),
     en('mode', 'Reaction', 'attract', ['attract', 'bounce', 'trim'], { hint: 'Attract lays the line along the surface, bounce turns it away, trim stops it there.' }),
@@ -112,34 +121,38 @@ export const modDefs = [
     num('strength', 'Strength %', 100, { min: 0, max: 100, n: 1, c: 1 }),
     bool('erase', 'Erase the whole line', false, { when: { mode: 'trim' } }),
   ], { after: true, in: [objectIn], desc: 'Lines meet the floor or a scene object: they lie along it, bounce off it or are trimmed where they touch.' }),
-  modifier('Dir_Avoid', 'Avoid intersections', [
-    en('mode', 'Do', 'push', ['push', 'trim', 'prune'], { hint: 'Push moves the line\'s points away from lines it comes close to; Trim cuts it where it first touches; Prune removes the whole line.' }),
-    num('clearance', 'Clearance', 8, { unit: 'cm', min: 0.1, n: 1, hint: 'Closer than this to another line counts as touching. Allow for both lines\' thickness.' }),
-    num('falloff', 'Falloff', 12, { unit: 'cm', min: 0, hint: 'Beyond the clearance the push fades out over this distance.' }),
-    num('strength', 'Amount %', 100, { min: 0, max: 100, n: 1, c: 1, when: { mode: 'push' }, hint: 'How much of the way out to the clearance a touching point is pushed.' }),
-    num('spread', 'Spread', 20, { unit: 'cm', min: 0, when: { mode: 'push' }, hint: 'Smooths the push along the line over this length, so it bends instead of kinking.' }),
+  modifier('Dir_Avoid', 'Avoid', [
+    en('mode', 'Do', 'push', ['push', 'trim', 'prune'], { hint: 'Push turns the line away where it meets another, and again each time it meets one; Trim cuts it where it first touches; Prune removes the whole line.' }),
+    en('with', 'Against', 'everything', ['same node', 'other nodes', 'everything'], { hint: 'Same node: lines of this node only. Other nodes: lines of other nodes only.' }),
+    num('clearance', 'Clearance', 8, { unit: 'cm', min: 0.1, n: 1, hint: 'Closer than this to another line counts as touching. Allow for the thickness of both lines.' }),
+    num('falloff', 'Falloff', 12, { unit: 'cm', min: 0, when: { mode: 'push' }, hint: 'From this far beyond the clearance it starts turning away.' }),
+    num('strength', 'Amount %', 100, { min: 0, max: 100, n: 1, c: 1, when: { mode: 'push' }, hint: 'How hard it turns away.' }),
     num('baseSkip', 'Ignore base', 10, { unit: 'cm', min: 0, hint: 'Near its base a line always touches its parent; this first stretch is left alone.' }),
-  ], { desc: 'Keeps lines from running into lines grown before them (other branches, or earlier ones of this part): pushes them aside, trims them, or removes them.' }),
+  ], { desc: 'Keeps lines from running into lines grown before them (other branches, or earlier ones of this part): turns them away, trims them, or removes them.' }),
   modifier('Dir_VectorOrient', 'Vector orientation', [
     vec('vector', 'Vector', [0, 1, 0], { sock: false }),
     en('axis', 'Orient axis', 'y', ['x', 'y']),
     num('strength', 'Strength %', 100, { min: 0, max: 100, n: 1, c: 1 }),
-  ], { after: true, desc: 'Rolls the line around itself so its face points along a vector. Good for leaves facing the sky.' }),
+  ], { retired: true, after: true, desc: 'Rolls the line around itself so its face points along a vector. Good for leaves facing the sky.' }),
+  // Old files only; Trim (Dir_Cut) took its place.
   modifier('Dir_StartEndSlice', 'Start / end slice', [
     num('start', 'Start slice', 0, { unit: 'cm', min: 0, n: 1 }),
     num('startRate', 'Start count rate %', 100, { min: 0, max: 100 }),
     num('end', 'End slice', 0, { unit: 'cm', min: 0, n: 1 }),
     num('endRate', 'End count rate %', 100, { min: 0, max: 100 }),
-    bool('keepLength', 'No affect length', true),
     en('capStart', 'Cap start override', 'none', caps),
     en('capEnd', 'Cap end override', 'none', caps),
-  ], { desc: 'Removes length from the start and end of lines.' }),
+  ], { retired: true, desc: 'Removes length from the start and end of lines.' }),
+  modifier('Dir_Cut', 'Trim', [
+    num('at', 'Cut at %', 70, { min: 0, max: 100, n: 1, c: 1, along: 'pos', hint: 'How much of each line stays. Its curve runs along the parent, so lines can break shorter in one part of it.' }),
+    num('atChaos', 'Variation %', 20, { min: 0, max: 100, hint: 'Moves each cut a random amount up or down the line.' }),
+    num('rate', 'Lines cut %', 100, { min: 0, max: 100, n: 1, c: 1, along: 'pos', hint: 'How many of the lines break; the others stay whole.' }),
+  ], { desc: 'Breaks lines off at random places, like snapped branches. The cut keeps its thickness, and what grew beyond it goes.' }),
   modifier('Dir_OptimizeSteps', 'Optimize steps', [num('tolerance', 'Angle tolerance', 4, { unit: '°', min: 0, n: 1 })],
-    { desc: 'Removes points on nearly straight stretches, saving triangles without changing the shape.' }),
+    { retired: true, desc: 'Removes points on nearly straight stretches, saving triangles without changing the shape.' }),
   modifier('Dir_Eraser', 'Eraser', [data('lines', [])],
     { tool: 'erase', desc: 'Click lines in the 3D view to erase them. Use the panel to bring them back.' }),
   modifier('Dir_Trim', 'Trim', [
-    bool('keepLength', 'No affect length', true),
     en('capEnd', 'Cap end override', 'none', caps),
     data('cuts', []),
   ], { tool: 'trim', desc: 'Click a line in the 3D view to cut it there.' }),

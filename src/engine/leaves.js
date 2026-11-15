@@ -2,6 +2,7 @@
 import { hash, DEG, clamp, bakeCurve, sampleCurve, hexToRgb, norm, sub } from './math.js';
 import { sampleLine, newSample, tOf } from './line.js';
 import { windWeight } from './wind.js';
+import { rotateUv } from './tube.js';
 
 const POLYGONS = {
   rectangle: [[-1, 0], [1, 0], [1, 1], [-1, 1]],
@@ -26,8 +27,29 @@ function shapesFor(ev, job) {
   return job.cutouts;
 }
 
+// A cutout can keep its own shape for a LOD (cut.lods[k], from the cutout editor); a LOD without one uses the cutout.
+const lodCuts = new WeakMap();
+// While the cutout editor shows a LOD version, the cutout itself holds that version and lod0 keeps the full one.
+const fullCuts = new WeakMap();
+function fullOf(c) {
+  if (!c.lodView || !c.lod0) return c;
+  if (!fullCuts.has(c.lod0)) fullCuts.set(c.lod0, { id: c.id, name: c.name, enabled: c.enabled, lods: c.lods, ...c.lod0 });
+  return fullCuts.get(c.lod0);
+}
 function pickCutout(ev, job, list, line) {
-  return list[Math.floor(hash(ev.h(job.node), line.id, 9) * list.length) % list.length];
+  const P = job.node.params;
+  let i;
+  if (P.cutDist === 'by curve' && list.length > 1) {
+    // Along the parent (0 base, 1 tip) the curve picks a place in the list (0 first, 1 last); Variation shifts it.
+    job.cutTable ||= bakeCurve(P.cutCurve || { pts: [[0, 0, 's'], [1, 1, 's']] });
+    const f = sampleCurve(job.cutTable, clamp(line.pos ?? 0, 0, 1)) + ((+P.cutVary || 0) / 100) * (hash(ev.h(job.node), line.id, 10) * 2 - 1);
+    i = clamp(Math.round(f * (list.length - 1)), 0, list.length - 1);
+  } else i = Math.floor(hash(ev.h(job.node), line.id, 9) * list.length) % list.length;
+  const c = fullOf(list[i]);
+  const own = c.lods?.[ev.lod];
+  if (!own?.mesh) return c;
+  if (!lodCuts.has(own)) lodCuts.set(own, { ...c, ...own, lodOwn: true });
+  return lodCuts.get(own);
 }
 
 // How far along and up a path gets after walking d, starting at angle a0 and turning by kappa per unit: an exact arc,
@@ -168,7 +190,8 @@ function cutoutLeaf(ev, buf, job, line, cut, steps, ct, flip, shape) {
   const P = job.node.params;
   const comps = job.comps;
   const col = [1, 1, 1]; const col2 = [1, 1, 1];
-  const far = ev.lod >= 2 && (+(line.node.params.lodReduce ?? 100)) > 0;
+  // A LOD's own cutout is drawn as made, not swapped for the far card.
+  const far = !cut.lodOwn && ev.lodCards(line.node);
   const { pts, tris } = far ? cutoutCard(cut.mesh) : cut.mesh;
   const at = leafShaper(ev, job, line, ct, shape);
   const count = pts.length;
@@ -187,6 +210,7 @@ function cutoutLeaf(ev, buf, job, line, cut, steps, ct, flip, shape) {
     comps.color(line, tOf(line, s), col, col2);
     setCommon(buf, idx, col, col2, line, t, Math.min(1, t * 1.6));
   }
+  if (+P.uvAngle) { const [cu, cv] = uvBoxCenter(cut.mesh.pts); rotateUv(buf.uv, base, base + count, +P.uvAngle, cu, cv); }
   // Normals from the leaf's own triangles, so folds shade correctly.
   const p = buf.position; const n = buf.normal;
   for (let i = 0; i < tris.length; i += 3) {
@@ -214,6 +238,17 @@ function cutoutLeaf(ev, buf, job, line, cut, steps, ct, flip, shape) {
       else buf.tri(off + tris[i], off + tris[i + 2], off + tris[i + 1]);
     }
   }
+}
+
+// A cutout turns about the middle of its own patch of the atlas, so it stays in its cell.
+const boxes = new WeakMap();
+function uvBoxCenter(pts) {
+  if (boxes.has(pts)) return boxes.get(pts);
+  let u0 = Infinity; let u1 = -Infinity; let v0 = Infinity; let v1 = -Infinity;
+  for (const p of pts) { u0 = Math.min(u0, p.u); u1 = Math.max(u1, p.u); v0 = Math.min(v0, p.v); v1 = Math.max(v1, p.v); }
+  const c = [(u0 + u1) / 2, (v0 + v1) / 2];
+  boxes.set(pts, c);
+  return c;
 }
 
 // Custom UVs from the mesh node. Atlas leaves keep their fitted coordinates. Values that can vary per line are read per line.
@@ -346,6 +381,7 @@ export function buildLeaves(ev, buf, job, lines) {
         if (P.flip) { buf.tri(a, d, e); buf.tri(e, d, f); } else { buf.tri(a, e, d); buf.tri(e, f, d); }
       }
     }
+    if (P.uvOn) rotateUv(buf.uv, base, base + rowsN * cols, +P.uvAngle || 0);
     if (P.twoSided) mirror(buf, base, rowsN * cols, rowsN, cols, P.flip);
     }
     blendLeafBase(buf, v0, buf.nv, line, P);
@@ -464,6 +500,7 @@ export function buildStandardLeaves(ev, buf, job, lines) {
         }
       }
     }
+    if (+P.uvAngle && (cut || P.uvOn)) { const [cu, cv] = cut ? uvBoxCenter(cut.poly) : [0.5, 0.5]; rotateUv(buf.uv, base, base + count * sides, +P.uvAngle, cu, cv); }
   }
   applySoft(ev, buf, start, buf.nv, +P.softNormals || 0);
 }

@@ -10,7 +10,7 @@ const nb = (k, l, d, o = {}) => num(k, l, d, { sock: false, ...o });
 
 export const TABS = {
   spline: { label: 'Spline', text: 'The line itself: length, segments and its modifiers.' },
-  growth: { label: 'Growth', text: 'Let it grow itself into a whole tree, year by year, by light, shadow and gravity: one node for a birch, an oak or a pine.' },
+  growth: { label: 'Growth', text: 'The tree grows itself, year by year: buds race for light, shaded branches drop, gravity and light steer the shoots, meshes block them. Pick a species, then steer it with the first few settings.' },
   place: { label: 'Placement', text: 'Where lines start: from a point, along a line, in a ring, as an urchin (a ball of lines), or on the parent. Each entity, the tip and the transform open from their headings.' },
   mesh: { label: 'Mesh', text: 'What wraps the line: a tube, leaf blades or cutout leaves.' },
   shape: { label: 'Mesh', text: 'The shape: sphere, rectangle, cone, disk or an imported file, with its transform and modifiers.' },
@@ -31,10 +31,21 @@ const BASE_MODS = {
   wave: { title: 'Wave', desc: 'Ripples the surface in bands.', params: [nb('amp', 'Strength', 2, { unit: 'cm' }), nb('length', 'Wavelength', 40, { unit: 'cm', min: 0.1 })] },
 };
 
+// LOD reduction per LOD, LOD0 (left) to the last LOD (right): eases in like the old fixed steps did. A getter, so
+// each new modifier gets its own copy.
+const lodAmount = () => nv('amount', 'Reduction %', 80, { min: 0, max: 100, noVary: true, hint: 'How much detail is gone by the last LOD an export makes. The curve sets it per LOD, from LOD0 (left) to the last LOD (right).' });
+const lodCurves = { k: 'curves', t: 'data', get d() { return { amount: { pts: [[0, 0, 's'], [0.33, 0.5, 's'], [0.67, 0.82, 's'], [1, 1, 's']] } }; } };
+
 // On a Mesh, a modifier shapes each copy on its own, or every copy together as one (a bend across them all).
-export const SHAPE_MODS = Object.fromEntries(Object.entries(BASE_MODS).map(([k, m]) => [k, {
-  ...m, params: [...m.params, en('space', 'Apply to', 'each copy', ['each copy', 'all together'], { hint: 'Each copy bends on its own; all together bends the whole set of copies as one.' })],
-}]));
+export const SHAPE_MODS = {
+  ...Object.fromEntries(Object.entries(BASE_MODS).map(([k, m]) => [k, {
+    ...m, params: [...m.params, en('space', 'Apply to', 'each copy', ['each copy', 'all together'], { hint: 'Each copy bends on its own; all together bends the whole set of copies as one.' })],
+  }])),
+  lod: {
+    title: 'LOD', desc: 'Fewer segments on the copies in the lower LODs an export makes. Replaces LOD reduction %.',
+    params: [lodAmount(), bool('segments', 'Segments', true, { hint: 'Sphere, cone, disk and rectangle segments. Imported meshes stay as they are.' }), lodCurves],
+  },
+};
 
 export const SURFACE_MODS = {
   // Strength varies per piece (each leaf or branch) and follows its curve from each piece's base to its tip.
@@ -46,20 +57,29 @@ export const SURFACE_MODS = {
   inflate: BASE_MODS.inflate,
   wave: BASE_MODS.wave,
   jitter: { title: 'Jitter', desc: 'Moves every point in or out by its own random amount, for a rough, hand-made surface.', params: [nb('amount', 'Amount', 0.5, { unit: 'cm' })] },
+  crumple: {
+    title: 'Crumple', desc: 'Crumples and folds each leaf or card from its corners, like an old dried leaf. The base stays where it grows.',
+    params: [
+      nv('amount', 'Amount', 0.5, { min: 0, max: 2, hint: 'How deep the folds go. Variation changes it per leaf; the curve sets it from base to tip.' }),
+      nb('curl', 'Corner curl', 0.3, { min: -1, max: 1, hint: 'Rolls the corners and edges up, or down below 0.' }),
+      nb('wrinkle', 'Wrinkles', 0.2, { unit: 'cm', min: 0, hint: 'Strength of small bumps over the surface.' }),
+      nb('wrinkleScale', 'Wrinkle size', 2, { unit: 'cm', min: 0.1, hint: 'Smaller is finer wrinkles.' }),
+      int('seed', 'Seed', 1, { min: 0, max: 9999, sock: false }),
+    ],
+  },
   smooth: { title: 'Smooth', desc: 'Relaxes the surface, softening sharp folds and steps.', params: [nb('strength', 'Strength', 0.5, { min: 0, max: 1 }), int('passes', 'Passes', 2, { min: 1, max: 10, sock: false })] },
   subdivide: {
-    title: 'Subdivide', desc: 'Splits every triangle into four for a finer, rounder surface. Smooth 0 keeps the shape exactly; 1 rounds it off.',
+    title: 'Subdivide', desc: 'Splits every quad into four quads (and each triangle into four) for a finer, rounder surface. Smooth 0 keeps the shape exactly; 1 rounds it off.',
     params: [int('levels', 'Levels', 1, { min: 1, max: 3, sock: false }), nb('smooth', 'Smooth', 1, { min: 0, max: 1 }), bool('keepEdges', 'Keep edges', true, { hint: 'Open borders, like a leaf outline, keep their shape.' })],
   },
   thickness: {
     title: 'Thickness', desc: 'Gives a flat sheet a back and sides, with the same UVs, so leaves and petals get real thickness.',
     params: [
-      nb('amount', 'Width scale', 0.1, { min: 0, hint: 'Thickness as a share of the cutout width: 1 is as thick as it is wide. Can go above 1.' }),
+      nv('amount', 'Thickness', 0.1, { min: 0, hint: 'Thickness as a share of the cutout width: 1 is as thick as it is wide. Can go above 1. Variation changes it per leaf; the curve sets it from base to tip.' }),
       nv('pinch', 'Edge pinch', 0.5, { min: 0, max: 1, hint: '1 brings the outline to a thin edge; points inside keep the full thickness. The curve sets it from base to tip.' }),
-      crv('profile', 'Profile', { pts: [[0, 1, 's'], [1, 1, 's']] }, { hint: 'Thickness from the edge (left) to the middle (right). Lower the left end for an arch.' }),
-      bool('both', 'Both sides', true, { hint: 'Grows half each way; off grows only backward.' }),
-      // Across the leaf, as if it were a card with columns along its length: only the side columns pinch.
-      en('measure', 'Measure across', 'sides', ['sides', 'outline'], { hint: 'Sides measures each point across the leaf, side to side, so only the side columns thin out and the length keeps its own pinch. Outline measures from the nearest edge, tip and base included.' }),
+      // Profile, Both sides and Measure across are no longer offered; files that set them keep their look.
+      { k: 'measure', t: 'data', d: 'sides' },
+      { k: 'curves', t: 'data', get d() { return { pinch: { pts: [[0, 0.15, 's'], [0.5, 0.4, 's'], [1, 1, 's']] } }; } },
       nb('sidePinch', 'Side pinch', 0.8, { min: 0, max: 1, hint: 'How thin the side columns get: 1 brings the sides to a sharp edge.' }),
       nb('sideWidth', 'Side width', 0.35, { min: 0.01, max: 1, hint: 'How far in from each side the pinch reaches, as a share of the half-width. The middle stays flat.' }),
       crv('upper', 'Upper profile', { pts: [[0, 1, 's'], [1, 1, 's']] }, { hint: 'The front face from the side (left) to the middle (right).' }),
@@ -67,17 +87,56 @@ export const SURFACE_MODS = {
     ],
   },
   avoid: {
-    title: 'Avoid intersections', desc: 'Pushes the surface away from other parts it runs into, along its normals, or removes the parts that intersect.',
+    title: 'Avoid intersections', desc: 'Tilts or moves each leaf or card that runs into another so it clears it, pushes points out along their normals, or removes the parts that intersect.',
     params: [
-      en('mode', 'Do', 'push', ['push', 'prune'], { hint: 'Push moves points out along their normals; Prune removes each leaf or branch piece that hits another.' }),
+      en('mode', 'Do', 'tilt', ['tilt', 'push', 'prune'], { hint: 'Tilt turns each touching leaf or card around its base, or slides it over or under the other, as a whole. Push moves points out along their normals. Prune removes each piece that hits another.' }),
       en('with', 'Against', 'same node', ['same node', 'other nodes', 'everything'], { hint: 'Same node: leaves against leaves of this node. Other nodes: against branches and other parts.' }),
       nb('clearance', 'Clearance', 2, { unit: 'cm', min: 0.01, hint: 'Closer than this counts as touching.' }),
-      nb('falloff', 'Falloff', 4, { unit: 'cm', min: 0, hint: 'Beyond the clearance the push fades out over this distance.' }),
-      nb('amount', 'Amount', 2, { unit: 'cm', min: 0, when: { mode: 'push' }, hint: 'How far a touching point is pushed.' }),
+      nb('falloff', 'Falloff', 4, { unit: 'cm', min: 0, when: { mode: 'push' }, hint: 'Beyond the clearance the push fades out over this distance.' }),
+      nb('maxTilt', 'Max tilt', 30, { unit: '°', min: 0, max: 90, when: { mode: 'tilt' }, hint: 'The most a piece is turned to clear another. Wide cards need less.' }),
+      nb('amount', 'Amount', 2, { unit: 'cm', min: 0, when: { mode: ['push', 'tilt'] }, hint: 'How far a touching point is pushed, or how far a piece may slide when tilting is not enough.' }),
       nb('baseSkip', 'Ignore base %', 10, { min: 0, max: 100, hint: 'The first part of each piece, where it sits on its parent, is left alone.' }),
     ],
   },
+  project: {
+    title: 'Project', desc: 'Wraps the surface onto a target mesh, like a shrinkwrap: each point moves to the nearest part of the target, or along its own normal until it meets it.',
+    params: [
+      { k: 'target', l: 'Target', t: 'ref', d: null },
+      en('mode', 'Mode', 'nearest surface', ['nearest surface', 'along normal'], { hint: 'Nearest surface moves each point to the closest spot on the target. Along normal looks out and in along the point normal.' }),
+      nb('offset', 'Offset', 0, { unit: 'cm', hint: 'Keeps the surface this far off the target: above it when positive, below when negative.' }),
+      nv('strength', 'Strength', 1, { min: 0, max: 1, noVary: true, hint: 'How far each point goes toward the target: 1 lands on it. The curve sets it from base to tip.' }),
+      en('falloff', 'Falloff', 'none', ['none', 'toward the tip', 'toward the base'], { hint: 'Fades the strength along each piece.' }),
+      nb('maxDist', 'Max distance', 0, { unit: 'cm', min: 0, hint: 'Points farther than this from the target stay put. 0 has no limit.' }),
+      en('parts', 'Affects', 'all', ['all', 'first line', 'all but the first'], { hint: 'Which lines of this node are wrapped: the first one is usually the trunk.' }),
+    ],
+  },
   ripple: { title: 'Ripple', desc: 'Rings spreading out from the middle of the plant, like wind across a canopy.', params: [nb('amp', 'Strength', 1, { unit: 'cm' }), nb('length', 'Wavelength', 60, { unit: 'cm', min: 0.1 })] },
+  merge: {
+    title: 'Merge', desc: 'Welds points closer than a distance into one, closing small gaps and cracks.',
+    params: [
+      nb('distance', 'Distance', 0.1, { unit: 'cm', min: 0, hint: 'Points closer than this become one.' }),
+      bool('seams', 'Keep UV seams', true, { hint: 'Points that meet but have different UVs stay apart in the UVs, so textures keep their seams. Off welds them fully.' }),
+    ],
+  },
+  remesh: {
+    title: 'Remesh', desc: 'Rebuilds the whole mesh as one even surface, so parts that touch or overlap blend into one. UVs, colors and wind come from the nearest part of the old mesh.',
+    params: [
+      int('resolution', 'Resolution', 64, { min: 8, max: 256, sock: false, hint: 'Cells along the longest side. Higher keeps more detail but is slower; thin parts need a high value.' }),
+      bool('quads', 'Quad faces', true, { hint: 'Keeps the new faces as quads on export; off gives triangles.' }),
+      nb('snap', 'Snap to source', 0.5, { min: 0, max: 1, hint: 'Pulls the new surface back toward the old one. 0 leaves it a little puffed out; 1 sits on it.' }),
+    ],
+  },
+  lod: {
+    title: 'LOD', desc: 'Thins this part out in the lower LODs an export makes. Replaces LOD reduction % on the Mesh tab.',
+    params: [
+      lodAmount(),
+      bool('segments', 'Segments', true, { hint: 'Fewer points along each line.' }),
+      bool('sides', 'Sides', true, { hint: 'Fewer sides around each tube.' }),
+      bool('leaves', 'Leaf count', true, { hint: 'Fewer leaves, each larger, so the crown keeps its look.' }),
+      int('cardFrom', 'Cards from LOD', 2, { min: 1, max: 8, sock: false, hint: 'Cutout leaves turn into plain cards from this LOD on.' }),
+      lodCurves,
+    ],
+  },
 };
 
 // The Material tab picks a scene material; what stays on the node is its own variation, vertex colors and UVs.
@@ -97,14 +156,20 @@ const material = (o = {}) => tag('material', 'mesh', [
   { k: 'gradH', l: 'By height', t: 'gradient', d: [[0, '#6b7d4a'], [1, '#ffffff']], when: { gradHOn: true } },
   ...(o.uv ? [
     section('_uv', 'UV', { fold: true }),
+    { k: '_uvedit', l: 'UV editor', t: 'action', act: 'uveditor', d: null, to: null },
     nv('tileU', 'Tile U', 1),
     nv('tileV', 'Tile V', 1),
     nv('offsetU', 'Offset U', 0, { abs: 1 }),
     nv('offsetV', 'Offset V', 0, { abs: 1 }),
+    nb('uvAngle', 'UV angle', 0, { unit: '°', min: -360, max: 360, hint: 'Turns the texture on the surface about the middle of the tile (a cutout: of its own patch). 90 lays it sideways.' }),
+    en('uvFix', 'Fit', 'none', ['none', 'U', 'V'], { when: { meshType: 'tube' }, hint: 'U fits the texture once around the tube, V once along its whole length. None tiles both.' }),
+    nb('uvTileFrom', 'Tile from V', 0, { min: 0, max: 1, when: { meshType: 'tube' }, hint: 'The texture below this is used once at the base (where the branch blends in); above it the part up to Tile to V repeats.' }),
+    nb('uvTileTo', 'Tile to V', 1, { min: 0, max: 1, when: { meshType: 'tube' } }),
     bool('flipU', 'Flip U', false),
     bool('flipV', 'Flip V', false),
-    bool('absLength', 'Repeat by distance', true, { when: { meshType: 'tube' } }),
-    nb('lengthV', 'Repeat every', 60, { unit: 'cm', min: 0.1, when: { meshType: 'tube', absLength: true } }),
+    bool('uvMatch', 'Even texel size', true, { when: { meshType: 'tube' }, hint: 'The trunk wraps the texture once around and repeats it at the same scale along; thinner branches take a smaller share so the bark looks the same size everywhere.' }),
+    bool('absLength', 'Repeat by distance', true, { when: { meshType: 'tube', uvMatch: false } }),
+    nb('lengthV', 'Repeat every', 60, { unit: 'cm', min: 0.1, when: { meshType: 'tube', uvMatch: false, absLength: true } }),
     nv('uvTwist', 'Twist', 0, { unit: '°', abs: 360, when: { meshType: 'tube' } }),
     en('capUv', 'Cap UVs', 'continue', ['continue', 'disc'], { when: { meshType: 'tube' }, hint: 'Continue runs the bark on over the caps; Disc lays a round patch of the texture on each, like the rings of a cut log.' }),
     nb('capUvScale', 'Cap UV size', 1, { min: 0.01, when: { meshType: 'tube', capUv: 'disc' }, hint: 'How much of the texture one cap covers: 1 is the whole picture.' }),
@@ -168,6 +233,8 @@ const placement = (o = {}) => tag('place', 'place', [
   // Mesh
   en('meshOn', 'On the mesh', 'random', ['random', 'faces', 'vertices', 'layers'], { when: { place: 'mesh' }, hint: 'Random spreads them over the surface; Faces puts one on each face, Vertices one on each point; Layers lays rows around it from the bottom up, like roof tiles.' }),
   int('layers', 'Layers', 8, { min: 1, max: 200, sock: false, when: { place: 'mesh', meshOn: 'layers' } }),
+  int('layerPer', 'Per layer', 8, { min: 1, max: 500, sock: false, when: { place: 'mesh', meshOn: 'layers' } }),
+  en('layerAxis', 'Axis', 'Z', ['X', 'Y', 'Z'], { when: { place: 'mesh', meshOn: 'layers' }, hint: 'The layers stack along this axis, Z up, and ring around it.' }),
   bool('layerStagger', 'Stagger layers', true, { when: { place: 'mesh', meshOn: 'layers' }, hint: 'Each row sits between the ones below it, like tiles.' }),
   nb('meshAlign', 'Follow normal %', 100, { min: 0, max: 100, when: { place: 'mesh' }, hint: 'At 100 lines follow the mesh surface. At 0 they point straight up.' }),
   nb('minDist', 'Min distance', 5, { unit: 'cm', min: 0.01, when: { place: 'mesh', spacing: 'even' } }),
@@ -264,6 +331,11 @@ const meshing = tag('mesh', 'mesh', [
   { k: 'material', l: 'Material', t: 'matref', d: null, to: null, when: { meshType: 'cutout' } },
   { k: 'cutoutPick', l: 'Use cutouts', t: 'cutpick', d: null, to: null, when: { meshType: 'cutout' } },
   { k: '_atlas', l: 'Edit cutouts', t: 'action', act: 'atlas', d: null, to: null, when: { meshType: 'cutout' } },
+  // The node's own order of its cutouts (ids), set in Use cutouts; null keeps the material's order.
+  { k: 'cutoutOrder', t: 'data', d: null, to: null },
+  en('cutDist', 'Spread', 'random', ['random', 'by curve'], { when: { meshType: 'cutout' }, hint: 'Random picks any cutout for each leaf. By curve picks along the parent: the curve goes from base (left) to tip (right), low is the first cutout in the list, high the last.' }),
+  crv('cutCurve', 'Pick curve', { pts: [[0, 0, 's'], [1, 1, 's']] }, { when: { meshType: 'cutout', cutDist: 'by curve' } }),
+  nb('cutVary', 'Variation %', 0, { min: 0, max: 100, when: { meshType: 'cutout', cutDist: 'by curve' }, hint: 'Shifts each pick up or down the list at random.' }),
   section('_fold', 'Deformation', { fold: true, when: { meshType: LEAFY } }),
   nv('angleAcross', 'Fold', 12, { unit: '°', abs: 45, when: { meshType: LEAFY }, hint: 'Lifts both halves up from the midrib in a V.' }),
   nv('incAcross', 'Curl', 6, { unit: '°', abs: 90, when: { meshType: LEAFY }, hint: 'Rolls the edges in (or out, below 0) as a smooth arc.' }),
@@ -292,43 +364,49 @@ export const WIND_PRESETS = {
   Palm: { windPower: 90, windSpeed: 70, windFlutter: 25, windCurve: { pts: [[0, 0, 's'], [0.2, 0.05, 's'], [0.7, 0.45, 's'], [1, 1, 's']] } },
 };
 
-// Growth (engine/growth.js): the settings of the simulation, shown on the Growth tab.
-const G = { when: { growOn: true } };
-const growth = tag('growth', 'path', [
-  bool('growOn', 'Grow by itself', false, { hint: 'Grows a whole tree from each start, year by year: buds race for light, shaded branches drop off, gravity and light steer them. Leaves and other children grow on every branch it makes.' }),
-  { k: '_growPreset', l: 'Species…', t: 'action', act: 'growpreset', d: null, to: null, ...G },
-  section('_growGeo', 'Geometry', { ...G }),
-  int('growYears', 'Years', 18, { min: 1, max: 80, sock: false, ...G, hint: 'How many seasons it grows.' }),
-  nb('internode', 'Internode length', 30, { unit: 'cm', min: 1, ...G, hint: 'One year’s step between buds; also the size of a light cell.' }),
-  nb('budRadius', 'Twig thickness', 0.5, { unit: 'cm', min: 0.01, ...G, hint: 'The thickness at the tips; everything below is as thick as what it carries.' }),
-  nb('pipeExp', 'Thickening', 2.5, { min: 1.5, max: 4, ...G, hint: 'How forks add up: 2 thickens fast, 3 stays slender.' }),
-  nb('branchAngle', 'Angle with parent', 45, { unit: '°', min: 0, max: 120, ...G }),
-  nb('phyllotaxis', 'Phyllotaxis angle', 137.5, { unit: '°', min: 0, max: 360, ...G, hint: '137.5 spirals, 180 alternates, 90 pairs.' }),
-  int('budsPerNode', 'Buds per node', 1, { min: 1, max: 8, sock: false, ...G, hint: '2 for opposite pairs (ash, maple), 4–6 for whorls (pine).' }),
-  nb('angNoise', 'Angular noise', 0.2, { min: 0, max: 2, ...G }),
-  nb('growSpeed', 'Growth speed', 2, { min: 0.1, max: 6, ...G, hint: 'How much a year’s light turns into new shoots.' }),
-  nb('apical', 'Apical', 0.52, { min: 0.3, max: 0.7, ...G, hint: 'Above 0.5 the main stem wins (a cone, like a spruce); below, the sides win (a dome, like an oak). Very sensitive.' }),
-  nb('decay', 'Decay', 0.9, { min: 0, max: 1, ...G, hint: 'How much less each side branch gets than the axis it comes from.' }),
-  section('_growShade', 'Shadowing', { ...G }),
-  nb('shadowStrength', 'Strength', 1, { min: 0, max: 4, ...G }),
-  int('shadowSize', 'Shadow size', 6, { min: 1, max: 12, sock: false, ...G, hint: 'How many cells down each bud’s shadow reaches.' }),
-  nb('lightInfluence', 'Light influence', 1, { min: 0, max: 1, ...G }),
-  nb('shedding', 'Shedding threshold', 0.25, { min: 0, max: 1, ...G, hint: 'Side branches with less light than this for their size drop off: higher gives a taller bare trunk.' }),
-  section('_growTrop', 'Tropism', { ...G }),
-  nb('verticalTrunk', 'Vertical trunk', 0.8, { min: 0, max: 1, ...G }),
-  nb('gravAngle', 'Gravitropism angle', 70, { unit: '°', min: 0, max: 180, ...G, hint: 'The angle from straight up that branches settle at: 0 up, 90 level, above 90 weeping.' }),
-  nb('gravInfluence', 'Gravitropism influence', 0.25, { min: 0, max: 2, ...G }),
-  nb('photoInfluence', 'Phototropism influence', 0.4, { min: 0, max: 2, ...G, hint: 'How strongly shoots turn toward the light.' }),
-  section('_growBuds', 'Bud placement', { ...G }),
-  nb('favorUp', 'Favor up', 0, { min: -1, max: 1, ...G }),
-  nb('favorSides', 'Favor sides', 0, { min: -1, max: 1, ...G }),
-  section('_growCuts', 'Cuts', { ...G }),
-  nb('cutTop', 'Max height', 0, { unit: 'cm', min: 0, ...G, hint: '0: no limit. Shoots stop at this height above the base, like a hedge or a pruned crown.' }),
-  nb('cutSpread', 'Max spread', 0, { unit: 'cm', min: 0, ...G, hint: '0: no limit. Nothing grows farther than this from the trunk.' }),
-  nb('cutClear', 'Clear trunk', 0, { unit: 'cm', min: 0, ...G, hint: 'No side branches below this height: a cleared trunk, as in a park or an orchard.' }),
-  section('_growLeaves', 'Leaves', { ...G }),
-  int('leafYears', 'Leaves on the last years', 0, { min: 0, max: 40, sock: false, ...G, hint: '0: children grow along the whole branch. Above 0: only on wood that grew in the last N years, so old limbs stay bare and leaves crowd the outside.' }),
-  int('growMax', 'Max nodes', 6000, { min: 100, max: 200000, sock: false, ...G, hint: 'A cap on the size: each node is one internode of branch.' }),
+// Growth (engine/growth.js): the settings of the simulation, on the Growth node's Growth tab. A Spline keeps them
+// hidden, so a file from when Growth was a Spline tab still grows the same tree.
+const growth = (node) => tag('growth', 'path', [
+  { k: 'growOn', t: 'data', d: node },
+  { k: '_growPreset', l: 'Species…', t: 'action', act: 'growpreset', d: null, to: null },
+  ...(node ? [col('wire', 'Wire color', '#7fbf4a')] : []),
+  int('growYears', 'Years', 18, { min: 1, max: 80, sock: false, hint: 'How many seasons it grows. More years: a taller, fuller tree. Age on the Age panel shortens or lengthens this.' }),
+  nb('apical', 'Leader strength', 0.52, { min: 0.3, max: 0.7, hint: 'How much the main stem wins over the side limbs. Above 0.5: one leader, a cone like a pine. Below 0.5: strong limbs, a round or spreading crown like an oak. Small steps change a lot.' }),
+  nb('growSpeed', 'Vigor', 2, { min: 0.1, max: 6, hint: 'How much of the light it catches turns into new shoots each year: more vigor, a bigger and denser tree.' }),
+  nb('branchAngle', 'Branch angle', 45, { unit: '°', min: 0, max: 120, hint: 'How far a new shoot leaves the stem it grows from.' }),
+  nb('gravAngle', 'Limb angle', 70, { unit: '°', min: 0, max: 180, hint: 'The angle from straight up that limbs bend toward as they grow: 0 upright, 90 level, above 90 hanging.' }),
+  nb('droop', 'Hanging twigs', 0, { min: 0, max: 3, hint: 'Twigs past the main limbs bend down under their weight: a little for a birch, a lot for a weeping willow.' }),
+  nb('shedding', 'Bare trunk', 0.25, { min: 0, max: 1, hint: 'Branches that get too little light drop off. Higher: shaded lower limbs drop sooner, so the trunk is bare higher up.' }),
+  nb('trunkThick', 'Trunk thickness', 0.65, { min: 0, max: 2, hint: 'How much the trunk and limbs thicken over the twigs. 1 is the natural thickness for what a branch carries; lower is slimmer.' }),
+  int('leafYears', 'Leaves on the last years', 0, { min: 0, max: 40, sock: false, hint: '0: leaves and other children grow along every branch. Above 0: only on wood that grew in the last N years, so old limbs stay bare and leaves crowd the outside.' }),
+  nb('lean', 'Lean', 0, { min: 0, max: 2, hint: '0: grows evenly all round. Above 0: the whole tree leans one way, as in steady wind or light from one side.' }),
+  nb('leanDir', 'Lean direction', 0, { unit: '°', min: -180, max: 180, hint: 'Which way it leans, around the base.' }),
+  bool('avoidMeshes', 'Grow around meshes', true, { hint: 'Meshes in the scene shade the tree and block it: shoots slide along them instead of growing through.' }),
+  section('_growLight', 'Light and shadow', { fold: true }),
+  nb('photoInfluence', 'Turn to light', 0.4, { min: 0, max: 2, hint: 'How strongly shoots bend toward brighter, less shaded space.' }),
+  nb('shadowStrength', 'Shadow strength', 1, { min: 0, max: 4, hint: 'How dark each bud makes the space below it. Darker: inner and lower shoots get less energy.' }),
+  int('shadowSize', 'Shadow reach', 6, { min: 1, max: 12, sock: false, hint: 'How many steps down each bud shades. Longer: a hollower crown with growth on the outside.' }),
+  nb('lightInfluence', 'Light matters', 1, { min: 0, max: 1, hint: '1: buds in shade grow less. 0: every bud grows as if in full sun.' }),
+  nb('favorUp', 'Favor upward buds', 0, { min: -1, max: 1, hint: 'Above 0: buds pointing up get more energy. Below 0: less.' }),
+  nb('favorSides', 'Favor sideways buds', 0, { min: -1, max: 1, hint: 'Above 0: buds pointing sideways get more energy, for a wider crown.' }),
+  section('_growShape', 'Shoots and buds', { fold: true }),
+  nb('internode', 'Step length', 30, { unit: 'cm', min: 1, hint: 'The length of one shoot step between buds; also the size of a light cell.' }),
+  nb('shootMax', 'Longest shoot a year', 6, { min: 0.2, max: 12, hint: 'The most steps the leader can grow in one year; side shoots get less, by Side share.' }),
+  nb('decay', 'Side share', 0.9, { min: 0, max: 1, hint: 'How much energy each side branch keeps compared with the stem it leaves. Lower: shorter side limbs.' }),
+  nb('leaderFade', 'Leader fades', 0, { min: 0, max: 2, hint: 'The leader loses its lead as the tree ages, so the crown opens into big limbs. 0 keeps one leader to the top.' }),
+  nb('verticalTrunk', 'Straight trunk', 0.8, { min: 0, max: 1, hint: '1: the trunk grows straight up. Lower: it wanders toward the light.' }),
+  nb('gravInfluence', 'Limb angle pull', 0.25, { min: 0, max: 2, hint: 'How strongly limbs bend toward the Limb angle.' }),
+  nb('angNoise', 'Crookedness', 0.2, { min: 0, max: 2, hint: 'Random wiggle in every shoot.' }),
+  nb('phyllotaxis', 'Bud turn', 137.5, { unit: '°', min: 0, max: 360, hint: 'How far each new bud turns around the stem from the last: 137.5 spirals, 180 alternates, 90 pairs.' }),
+  int('budsPerNode', 'Buds per step', 1, { min: 1, max: 8, sock: false, hint: '2 for opposite pairs (ash, maple), 4 to 6 for whorls (pine).' }),
+  nb('budRadius', 'Twig thickness', 0.5, { unit: 'cm', min: 0.01, hint: 'The thickness at the tips; everything below thickens with what it carries.' }),
+  nb('pipeExp', 'Thickening', 2.5, { min: 1.5, max: 4, hint: 'How forks add up: 2 thickens fast, 3 stays slender.' }),
+  section('_growCuts', 'Cuts and limits', { fold: true }),
+  nb('cutTop', 'Max height', 0, { unit: 'cm', min: 0, hint: '0: no limit. Shoots stop at this height above the base, like a hedge or a pruned crown.' }),
+  nb('cutSpread', 'Max spread', 0, { unit: 'cm', min: 0, hint: '0: no limit. Nothing grows farther than this from the trunk.' }),
+  nb('cutClear', 'Clear trunk', 0, { unit: 'cm', min: 0, hint: 'No side branches below this height: a cleared trunk, as in a park or an orchard.' }),
+  int('growMax', 'Max steps', 6000, { min: 100, max: 200000, sock: false, hint: 'A cap on the size: each step is one piece of branch. Lower is faster.' }),
+  ...(node ? [section('_growMods', 'Modifiers', { fold: true }), { k: 'mods', l: 'Modifiers', t: 'mods', set: 'spline', d: [] }] : []),
 ]);
 
 const wind = (leaves) => tag('wind', 'path', [
@@ -343,7 +421,7 @@ const wind = (leaves) => tag('wind', 'path', [
 
 export const unifiedDefs = [
   {
-    type: 'Spline', title: 'Spline', cat: 'plant', tabs: ['spline', 'place', 'mesh', 'material', 'wind', 'growth'],
+    type: 'Spline', title: 'Spline', cat: 'plant', tabs: ['spline', 'place', 'mesh', 'material', 'wind'],
     desc: 'One complete part of a plant: a line, where it starts, what wraps it, how it looks and how it moves. Connect a parent to grow it from another Spline or Mesh.',
     in: [{ k: 'parent', kind: 'parent', side: 'left', also: ['object'], multi: true, l: 'Parent' }],
     out: [{ k: 'children', kind: 'parent', side: 'right', l: 'Children' }],
@@ -353,13 +431,14 @@ export const unifiedDefs = [
         en('segMode', 'Segments', 'relative', ['relative', 'absolute'], { sock: false, hint: 'Relative: a point every Segment length, so longer lines get more. Absolute: every line gets the same number of segments.' }),
         nv('steps', 'Segment length', 25, { unit: 'cm', min: 0.05, when: { segMode: 'relative' } }),
         int('segCount', 'Segment count', 12, { min: 1, max: 400, sock: false, when: { segMode: 'absolute' } }),
+        bool('onSurface', 'Start on parent surface', true, { hint: 'Lines on a parent start on its bark, by its thickness, instead of at its center line.' }),
         col('wire', 'Wire color', '#35d07f'),
         {
           k: 'mods', l: 'Modifiers', t: 'mods', set: 'spline',
           d: [newMod('noise', 'Dir_Noise', { strength: 0 }, { name: 'Noise' }), newMod('gravity', 'Dir_Vector', { vector: [0, -1, 0], strength: 0 }, { name: 'Gravity' })],
         },
       ]),
-      ...growth,
+      ...growth(false),
       ...placement(),
       ...meshing,
       ...material({ uv: true }),
@@ -397,6 +476,22 @@ export const unifiedDefs = [
       { k: 'wire', t: 'data', d: '#a78af0' },
     ],
   },
+  // A tree that grows itself (engine/growth.js): it makes the trunk and branch lines; Splines connected as children
+  // (leaves, twigs, fruit) grow on every branch it makes.
+  {
+    type: 'Growth', title: 'Growth', cat: 'plant', tabs: ['growth', 'place', 'mesh', 'material', 'wind'],
+    desc: 'A whole tree that grows itself by light, shadow, gravity and the meshes around it. Connect Splines as children for leaves and twigs on every branch.',
+    in: [{ k: 'parent', kind: 'parent', side: 'left', also: ['object'], multi: true, l: 'Parent' }],
+    out: [{ k: 'children', kind: 'parent', side: 'right', l: 'Children' }],
+    params: [
+      ...growth(true),
+      ...placement(),
+      ...meshing,
+      ...material({ uv: true }),
+      ...wind(true),
+      { k: 'curves', t: 'data', d: { radius: TAPER, width: BLADE } },
+    ],
+  },
   // What the Placement tab runs on. Never in the menu: expand.js creates it.
   {
     type: 'Placement', title: 'Placement', cat: 'plant', hidden: true,
@@ -406,4 +501,4 @@ export const unifiedDefs = [
   },
 ];
 
-export const hasTabs = (type) => type === 'Spline' || type === 'Mesh';
+export const hasTabs = (type) => type === 'Spline' || type === 'Mesh' || type === 'Growth';

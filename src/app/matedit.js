@@ -108,7 +108,6 @@ export class MaterialEditor {
     const cutSec = sec('mat-sec-cuts');
     cutSec.append(el('h4', 'section', 'Cutouts'));
     const cuts = m.cutouts || [];
-    if (!m.texture) { cutSec.append(el('p', 'empty', 'Put a leaf picture in the Color slot to make cutouts from it.')); return; }
     const list = el('div', 'mat-cuts');
     for (const c of cuts) list.append(el('span', 'mat-cut', `${c.name || c.id} · ${c.stats?.quads ? `${c.stats.quads} quads` : `${c.stats?.triangles ?? 0} tris`}`));
     if (!cuts.length) list.append(el('p', 'empty', 'No cutouts yet.'));
@@ -116,6 +115,8 @@ export class MaterialEditor {
     const row = el('div', 'row-buttons');
     const make = el('button', 'wide', 'Make cutouts');
     make.title = 'Find the leaves in the picture and add a cutout for each. Cutouts already here stay.';
+    make.disabled = !m.texture;
+    if (!m.texture) make.title = 'Needs a leaf picture in the Color slot. You can still draw cutouts by hand in Edit cutouts.';
     make.addEventListener('click', async () => {
       const img = await materialPixels(m);
       const found = img ? contourCutouts(img, detectOpts(m)) : [];

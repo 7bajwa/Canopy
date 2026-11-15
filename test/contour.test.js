@@ -80,3 +80,17 @@ test('the middle line option adds a row of points along the leaf', async () => {
   assert.ok(mid[0].innerPx.length >= 6, `points along the middle: ${mid[0].innerPx.length}`);
   assert.ok(mid[0].innerPx.every(([x]) => Math.abs(x - 30) < 4), 'they lie on the middle');
 });
+
+test('redetecting one cutout finds only its own leaf and keeps its name, id and pivot', async () => {
+  const { redetectCutout } = await import('../src/leaf/contour.js');
+  const a = ellipse(80, 100, 50, 80); const b = ellipse(250, 120, 60, 70);
+  const img = image(360, 240, (x, y) => a(x, y) || b(x, y));
+  // A rough box over the first blob, as a person might draw it.
+  const old = { id: 'cutA', name: 'Mine', basePx: [80, 180], tipPx: [80, 20], outlinePx: [[40, 30], [120, 30], [120, 170], [40, 170]], innerPx: [], sprouts: [], lods: [null, { outlinePx: [] }] };
+  const c = redetectCutout(img, old, { padding: 2, segment: 16 });
+  assert.equal(c.id, 'cutA'); assert.equal(c.name, 'Mine'); assert.deepEqual(c.basePx, [80, 180]); assert.equal(c.lods, old.lods);
+  for (let k = 0; k < 32; k++) { const ang = (k / 32) * Math.PI * 2; assert.ok(inPoly(c.outlinePx, 80 + Math.cos(ang) * 48, 100 + Math.sin(ang) * 77), 'covers its blob'); }
+  assert.ok(c.outlinePx.every(([x]) => x < 160), 'the other blob is left out');
+  assert.equal(c.width, 360); assert.ok(c.mesh.tris.length > 0);
+  assert.equal(redetectCutout(img, { ...old, outlinePx: [[150, 5], [180, 5], [180, 20], [150, 20]] }, {}), null);
+});

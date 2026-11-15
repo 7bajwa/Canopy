@@ -1,114 +1,198 @@
 [
  {
   "name": "Alocasia",
-  "file": "Alocasia.canopy"
- },
- {
-  "name": "Areca palm",
-  "file": "Areca palm.canopy"
- },
- {
-  "name": "Banana",
-  "file": "Banana.canopy"
- },
- {
-  "name": "Banyan",
-  "file": "Banyan.canopy"
- },
- {
-  "name": "Bonsai juniper",
-  "file": "Bonsai juniper.canopy"
- },
- {
-  "name": "Branch for baking",
-  "file": "Branch for baking.canopy"
- },
- {
-  "name": "Broadleaf tree",
-  "file": "Broadleaf tree.canopy"
- },
- {
-  "name": "Climbing vine",
-  "file": "Climbing vine.canopy"
- },
- {
-  "name": "Conifer",
-  "file": "Conifer.canopy"
- },
- {
-  "name": "Dogwood branch",
-  "file": "Dogwood branch.canopy"
+  "file": "Bushes/Alocasia.canopy",
+  "thumb": "Bushes/Alocasia.png",
+  "category": "Bushes",
+  "price": 0
  },
  {
   "name": "Dracaena",
-  "file": "Dracaena.canopy"
- },
- {
-  "name": "English daisy",
-  "file": "English daisy.canopy"
- },
- {
-  "name": "Flowers",
-  "file": "Flowers.canopy"
- },
- {
-  "name": "Fountain grass",
-  "file": "Fountain grass.canopy"
- },
- {
-  "name": "Grass patch",
-  "file": "Grass patch.canopy"
- },
- {
-  "name": "Grass tufts",
-  "file": "Grass tufts.canopy"
- },
- {
-  "name": "Ground creeper",
-  "file": "Ground creeper.canopy"
- },
- {
-  "name": "Hanging vine",
-  "file": "Hanging vine.canopy"
- },
- {
-  "name": "Junction study (blend close-up)",
-  "file": "Junction study (blend close-up).canopy"
- },
- {
-  "name": "Mango tree",
-  "file": "Mango tree.canopy"
- },
- {
-  "name": "Oxeye daisies",
-  "file": "Oxeye daisies.canopy"
- },
- {
-  "name": "Papaya",
-  "file": "Papaya.canopy"
- },
- {
-  "name": "Plumeria",
-  "file": "Plumeria.canopy"
- },
- {
-  "name": "Scots pine",
-  "file": "Scots pine.canopy"
+  "file": "Bushes/Dracaena.canopy",
+  "thumb": "Bushes/Dracaena.png",
+  "category": "Bushes",
+  "price": 0
  },
  {
   "name": "Shrub with berries",
-  "file": "Shrub with berries.canopy"
- },
- {
-  "name": "Snowdrops",
-  "file": "Snowdrops.canopy"
- },
- {
-  "name": "Tall grass",
-  "file": "Tall grass.canopy"
+  "file": "Bushes/Shrub with berries.canopy",
+  "thumb": "Bushes/Shrub with berries.png",
+  "category": "Bushes",
+  "price": 0
  },
  {
   "name": "Variegated rubber plant",
-  "file": "Variegated rubber plant.canopy"
+  "file": "Bushes/Variegated rubber plant.canopy",
+  "thumb": "Bushes/Variegated rubber plant.png",
+  "category": "Bushes",
+  "price": 0
+ },
+ {
+  "name": "English daisy",
+  "file": "Flowers/English daisy.canopy",
+  "thumb": "Flowers/English daisy.png",
+  "category": "Flowers",
+  "price": 0
+ },
+ {
+  "name": "Flowers",
+  "file": "Flowers/Flowers.canopy",
+  "thumb": "Flowers/Flowers.png",
+  "category": "Flowers",
+  "price": 0
+ },
+ {
+  "name": "Oxeye daisies",
+  "file": "Flowers/Oxeye daisies.canopy",
+  "thumb": "Flowers/Oxeye daisies.png",
+  "category": "Flowers",
+  "price": 0
+ },
+ {
+  "name": "Snowdrops",
+  "file": "Flowers/Snowdrops.canopy",
+  "thumb": "Flowers/Snowdrops.png",
+  "category": "Flowers",
+  "price": 0
+ },
+ {
+  "name": "Fountain grass",
+  "file": "Grass/Fountain grass.canopy",
+  "thumb": "Grass/Fountain grass.png",
+  "category": "Grass",
+  "price": 0
+ },
+ {
+  "name": "Grass patch",
+  "file": "Grass/Grass patch.canopy",
+  "thumb": "Grass/Grass patch.png",
+  "category": "Grass",
+  "price": 0
+ },
+ {
+  "name": "Grass tufts",
+  "file": "Grass/Grass tufts.canopy",
+  "thumb": "Grass/Grass tufts.png",
+  "category": "Grass",
+  "price": 0
+ },
+ {
+  "name": "Tall grass",
+  "file": "Grass/Tall grass.canopy",
+  "thumb": "Grass/Tall grass.png",
+  "category": "Grass",
+  "price": 0
+ },
+ {
+  "name": "Branch for baking",
+  "file": "Misc/Branch for baking.canopy",
+  "thumb": "Misc/Branch for baking.png",
+  "category": "Misc",
+  "price": 0
+ },
+ {
+  "name": "Dogwood branch",
+  "file": "Misc/Dogwood branch.canopy",
+  "thumb": "Misc/Dogwood branch.png",
+  "category": "Misc",
+  "price": 0
+ },
+ {
+  "name": "Junction study (blend close-up)",
+  "file": "Misc/Junction study (blend close-up).canopy",
+  "thumb": "Misc/Junction study (blend close-up).png",
+  "category": "Misc",
+  "price": 0
+ },
+ {
+  "name": "Areca palm",
+  "file": "Trees/Areca palm.canopy",
+  "thumb": "Trees/Areca palm.png",
+  "category": "Trees",
+  "price": 0
+ },
+ {
+  "name": "Banana",
+  "file": "Trees/Banana.canopy",
+  "thumb": "Trees/Banana.png",
+  "category": "Trees",
+  "price": 0
+ },
+ {
+  "name": "Banyan",
+  "file": "Trees/Banyan.canopy",
+  "thumb": "Trees/Banyan.png",
+  "category": "Trees",
+  "price": 0
+ },
+ {
+  "name": "Bonsai juniper",
+  "file": "Trees/Bonsai juniper.canopy",
+  "thumb": "Trees/Bonsai juniper.png",
+  "category": "Trees",
+  "price": 0
+ },
+ {
+  "name": "Broadleaf tree",
+  "file": "Trees/Broadleaf tree.canopy",
+  "thumb": "Trees/Broadleaf tree.png",
+  "category": "Trees",
+  "price": 0
+ },
+ {
+  "name": "Conifer",
+  "file": "Trees/Conifer.canopy",
+  "thumb": "Trees/Conifer.png",
+  "category": "Trees",
+  "price": 0
+ },
+ {
+  "name": "Mango tree",
+  "file": "Trees/Mango tree.canopy",
+  "thumb": "Trees/Mango tree.png",
+  "category": "Trees",
+  "price": 0
+ },
+ {
+  "name": "Papaya",
+  "file": "Trees/Papaya.canopy",
+  "thumb": "Trees/Papaya.png",
+  "category": "Trees",
+  "price": 0
+ },
+ {
+  "name": "Plumeria",
+  "file": "Trees/Plumeria.canopy",
+  "thumb": "Trees/Plumeria.png",
+  "category": "Trees",
+  "price": 0
+ },
+ {
+  "name": "Scots pine",
+  "file": "Trees/Scots pine.canopy",
+  "thumb": "Trees/Scots pine.png",
+  "category": "Trees",
+  "price": 0
+ },
+ {
+  "name": "Climbing vine",
+  "file": "Vines/Climbing vine.canopy",
+  "thumb": "Vines/Climbing vine.png",
+  "category": "Vines",
+  "price": 0
+ },
+ {
+  "name": "Ground creeper",
+  "file": "Vines/Ground creeper.canopy",
+  "thumb": "Vines/Ground creeper.png",
+  "category": "Vines",
+  "price": 0
+ },
+ {
+  "name": "Hanging vine",
+  "file": "Vines/Hanging vine.canopy",
+  "thumb": "Vines/Hanging vine.png",
+  "category": "Vines",
+  "price": 0
  }
 ]

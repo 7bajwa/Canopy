@@ -1,5 +1,6 @@
 // The curve graph: scroll to zoom, right-drag to pan, points can go past the box, and a preset is one click away.
 import { bakeCurve, sampleCurve } from '../engine/math.js';
+import { lockDrag, unlockDrag, dragStart, dragStep } from './fields.js';
 
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 const S = (x, y) => [x, y, 's'];
@@ -74,19 +75,22 @@ export function curveEditor(curve, { onChange, onDone, onReset, scopes, scope, o
     i.addEventListener('pointerdown', (e) => {
       if (document.activeElement === i) return;
       e.preventDefault(); i.setPointerCapture(e.pointerId);
-      scrub = { x: e.clientX, v: parseFloat(i.value) || 0, moved: false };
+      scrub = { x: e.clientX, v: parseFloat(i.value) || 0, moved: false, d: dragStart(e) };
     });
     i.addEventListener('pointermove', (e) => {
       if (!scrub) return;
-      const dx = e.clientX - scrub.x;
-      if (!scrub.moved && Math.abs(dx) < 3) return;
-      scrub.moved = true;
+      if (!scrub.moved && Math.abs(e.clientX - scrub.x) < 3) return;
+      if (!scrub.moved) { scrub.moved = true; lockDrag(i, e); }
+      const [step] = dragStep(scrub.d, e);
       const span = axis === 'x' ? view.x1 - view.x0 : view.y1 - view.y0;
-      i.value = (scrub.v + dx * span * 0.004 * (e.shiftKey ? 0.1 : 1)).toFixed(3);
+      // Summed per event so Shift fine steps start from the current value instead of jumping.
+      scrub.v += step * span * 0.004 * (e.shiftKey ? 0.1 : 1);
+      i.value = scrub.v.toFixed(3);
       typed(true);
     });
     i.addEventListener('pointerup', () => {
       if (!scrub) return;
+      unlockDrag();
       const was = scrub; scrub = null;
       if (was.moved) { send(false); onDone?.(); } else { i.focus(); i.select(); }
     });

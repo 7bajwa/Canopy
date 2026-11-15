@@ -9,7 +9,7 @@ import { makeApi, startBridge, stopBridge } from './app/aibridge.js';
 import { makeLibrary } from './app/library.js';
 import { makeCards } from './app/cards.js';
 import { checkForUpdate } from './app/updater.js';
-import { GraphView, setTextScale, NODE_W, setGraphPalette } from './app/graphview.js';
+import { GraphView, setTextScale, NODE_W, setGraphPalette, sectionParams } from './app/graphview.js';
 import { Viewport } from './app/viewport.js';
 import { attachInput } from './app/input.js';
 import { AtlasEditor, ensureCutouts } from './app/atlas.js';
@@ -20,6 +20,7 @@ import { ViewGizmo } from './app/gizmo.js';
 import { takeOverColorInputs } from './app/colorpop.js';
 import { XfGizmo } from './app/xfgizmo.js';
 import { TexturePacker } from './app/pack.js';
+import { makeUvEditor } from './app/uveditor.js';
 import { materialOf, newMaterial } from './graph/materials.js';
 import { openSettings } from './app/settings.js';
 import { openExport } from './app/exportdlg.js';
@@ -47,7 +48,7 @@ function storedPrefs() {
 const prefs = { shadows: view.renderer.shadowMap.enabled, snap: false, graphDim: 1, layout: 'overlay', ui: 1, text: 1, varShow: 'icon', fadeOn: true, fadeStrength: 0.85, fadeSize: 1.25, exposure: 1, envLight: 0.55, navAt: 'middle', units: 'metric', windMin: 0, windMax: 10, gustFreq: 6, windSpeed: 1, windDir: 20, scaleShow: 'both', backupMin: 5, undoSteps: 80, shading: 'pbr', theme: 'forest', grid: true, gizmo: true,
   focus: 'auto', splitAt: 0.5, toolGroups: {}, wireColor: '#000000', wireOpacity: 0.35, dials: true, dialSize: 48, gizmoSize: 96, sunYaw: 38, navY2d: null, navY3d: null,
   texturesInFile: 'embed', renderSize: 2048, renderHeight: null, renderCamera: 'frame', renderGrid: false, renderPost: {}, glow: false, renderFigure: false, renderGround: true, renderBg: 'clear', renderBgColor: '#11160f', backupOn: true, aiBridge: false, devMode: false, updateCheck: true, updateAuto: false,
-  groundOn: true, groundColor: '#3a4a30', groundOpacity: 0.35, groundSize: 200, groundGrid: true, groundShadow: true, swapViews: false, barAt: 'top', navWall2d: null, navWall3d: null, customThemes: {}, ...storedPrefs() };
+  groundOn: true, groundColor: '#3a4a30', groundOpacity: 0.35, groundSize: 200, groundGrid: true, groundShadow: true, swapViews: false, barAt: 'top', navWall2d: null, navWall3d: null, customThemes: {}, xfBox: 'touch', ...storedPrefs() };
 const savePrefs = () => localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
 // Pictures were square before height had its own setting.
 prefs.renderHeight ??= prefs.renderSize;
@@ -89,7 +90,7 @@ function placePopup(p) {
   popup.style.top = `${Math.max(6, Math.min(r.height - b.height - 6, y)) / prefs.ui}px`;
 }
 
-// A plain list: { label, fn }, { head } for a heading, { sep: true } for a dividing line.
+// A plain list: { label, fn }, { head } for a heading, { sep: true } for a dividing line; `keep` leaves it open.
 function menu(p, items) {
   popup.replaceChildren();
   popup.classList.remove('add');
@@ -107,7 +108,7 @@ function menu(p, items) {
     if (it.on) b.setAttribute('aria-pressed', 'true');
     if (it.title) b.title = it.title;
     b.disabled = !!it.disabled;
-    b.addEventListener('click', () => { closePopups(); it.fn(); });
+    b.addEventListener('click', () => { if (!it.keep) closePopups(); it.fn(); });
     popup.append(b);
   }
   placePopup(p);
@@ -169,13 +170,13 @@ function addMenu(p, wire = null) {
   };
   const item = (type) => ({ label: NODE_TYPES[type].title, title: NODE_TYPES[type].desc, fn: () => place(type) });
   // Value and Curve still open from older files; new ones come from a value's own variation and curve icons.
-  menu(p, [item('Spline'), item('Mesh'), { sep: true }, item('Mix')]);
+  menu(p, [item('Spline'), item('Mesh'), item('Growth'), { sep: true }, item('Mix')]);
 }
 
 const newNode = (type, x, y) => {
   const n = addNode(type, x, y);
   // Tabs start with the first one open, so the settings of a new node are one glance away.
-  if (NODE_TYPES[type].tabs) n.tab = type === 'Mesh' ? 'shape' : 'spline';
+  if (NODE_TYPES[type].tabs) n.tab = NODE_TYPES[type].tabs[0];
   return n;
 };
 const settleNew = (n) => {
@@ -240,6 +241,18 @@ function paramMenu(p, node, row, zone) {
     { label: 'Reset to default', fn: () => { owner[k] = clone(param.d); done(); } },
   );
   menu(p, items);
+}
+
+// A section heading's menu: copy, paste and reset every value under it at once.
+function sectionMenu(p, node, key) {
+  const list = sectionParams(node.type, key);
+  const done = () => { changed({ layout: true }); commit(); };
+  const defs = defaultParams(node.type);
+  menu(p, [
+    { label: 'Copy section', fn: () => { clip = { what: 'section', key, v: Object.fromEntries(list.map((q) => [q.k, clone(node.params[q.k])])) }; } },
+    { label: 'Paste section', disabled: !(clip?.what === 'section' && clip.key === key), fn: () => { for (const q of list) if (q.k in clip.v) node.params[q.k] = clone(clip.v[q.k]); done(); } },
+    { label: 'Reset section', fn: () => { for (const q of list) node.params[q.k] = clone(defs[q.k] ?? q.d); done(); } },
+  ]);
 }
 
 function nodeMenu(p, node) {
@@ -392,21 +405,22 @@ const ui = {
   },
   onDrawStop() { press('pen', false); },
   status(zone) { $('#zone').textContent = zone === 'tree' ? 'Over the tree: scroll zooms the tree, right-drag pans it, middle-drag orbits' : 'Over the graph: scroll zooms the graph, right-drag pans it, middle-drag orbits the tree'; },
-  addMenu, nodeMenu, paramMenu, menu, toast, graphRegion, hoverTip,
+  addMenu, nodeMenu, paramMenu, sectionMenu, menu, toast, graphRegion, hoverTip,
   edit: makeEditors({ popup, placePopup, closePopups, menu, toast }),
   action: (act, node, p) => {
     if (act === 'mateditor') matEditor.open(node.params.material);
+    if (act === 'uveditor') { uvEditor.open(node); return; }
     if (act === 'windpreset') {
       menu(p || { x: 200, y: 200 }, Object.entries(WIND_PRESETS).map(([name, v]) => ({ label: name, fn: () => { Object.assign(node.params, structuredClone(v)); changed({ layout: true }); commit(); toast(`Wind set for ${name}.`); } })));
       return;
     }
     if (act === 'growpreset') {
-      menu(p || { x: 200, y: 200 }, Object.entries(GROWTH_PRESETS).map(([name, v]) => ({ label: name, fn: () => { Object.assign(node.params, { growOn: true }, v); changed({ layout: true }); commit(); toast(`Growth set for ${name}. Tune it from here.`); } })));
+      menu(p || { x: 200, y: 200 }, Object.entries(GROWTH_PRESETS).map(([name, v]) => ({ label: name, fn: () => { Object.assign(node.params, v); changed({ layout: true }); commit(); toast(`Growth set for ${name}. Tune it from here.`); } })));
       return;
     }
     if (act !== 'atlas') return;
     const m = materialOf(doc.graph, node);
-    if (!m?.texture) { toast('Pick a material with a leaf texture first, on the Material tab.'); return; }
+    if (!m) { toast('Pick a material first, on the Material tab.'); return; }
     editCutouts(m);
   },
   openMaterials: (id) => matEditor.open(id),
@@ -460,6 +474,7 @@ const packer = new TexturePacker($('#packer'), {
   editShape: (matId, cutId) => { const m = doc.graph.materials?.find((x) => x.id === matId); if (!m) return; matEditor.open(m.id); matEditor.dock(true); atlas.openOn(m, cutId); },
 });
 Object.assign(canopy, { bake, packer });
+const uvEditor = makeUvEditor({ editCutouts: (m) => editCutouts(m) });
 
 // ---- Settings ----
 function applyPref(k) {
@@ -493,6 +508,7 @@ function applyPref(k) {
   if (k === 'sunYaw') { view.setSunYaw(v); placeDials(); }
   if (k === 'navY2d' || k === 'navY3d' || k === 'navWall2d' || k === 'navWall3d') placeNavs();
   if (k === 'barAt') applyBar();
+  if (k === 'xfBox') xfGizmo.boxMode = v;
   if (k === 'swapViews') { layout(); graph.frameNodes(doc.graph.nodes, graphRegion(), true, 0.9, READABLE_ZOOM); }
   if (k.startsWith('ground')) view.setGround({ on: prefs.groundOn, color: prefs.groundColor, opacity: prefs.groundOpacity, size: prefs.groundSize, shadow: prefs.groundShadow, grid: prefs.groundGrid });
   if (k === 'aiBridge') { if (v) startBridge(aiApi()); else stopBridge(); }
@@ -526,6 +542,7 @@ const NAV = {
 };
 const NAV_TAP = {
   'g-focus': () => setPref('focus', prefs.focus === 'graph' ? 'auto' : 'graph'),
+  'g-del': () => { input.removeSelection(); showDel(); },
   'v-focus': () => setPref('focus', prefs.focus === 'tree' ? 'auto' : 'tree'),
   'g-zoom': () => NAV['g-zoom'](0, -40),
   'v-zoom': () => NAV['v-zoom'](0, -40),
@@ -761,7 +778,7 @@ for (const c of dialsEl.querySelectorAll('canvas')) {
 }
 
 // The ruler button under the dials stays out of the 3D view's own dragging.
-$('#dials .dial-btn')?.addEventListener('pointerdown', (e) => e.stopPropagation());
+for (const b of document.querySelectorAll('#dials .dial-btn')) b.addEventListener('pointerdown', (e) => e.stopPropagation());
 
 const settingsEl = $('#settings');
 const closeSettings = () => { settingsEl.hidden = true; };
@@ -769,17 +786,29 @@ settingsEl.querySelector('[data-close]').addEventListener('click', closeSettings
 settingsEl.addEventListener('pointerdown', (e) => { if (e.target === settingsEl) closeSettings(); });
 settingsEl.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSettings(); e.stopPropagation(); });
 
+// 'lines' shows only the splines, like one more shading; picking a shading goes back to 'mesh'.
 function setMode(mode) {
   view.setMode(mode);
+  prefs.splines = mode === 'lines';
+  savePrefs();
   for (const b of document.querySelectorAll('[data-mode]')) b.setAttribute('aria-pressed', b.dataset.mode === mode);
+  for (const b of document.querySelectorAll('[data-shade]')) b.setAttribute('aria-pressed', mode !== 'lines' && b.dataset.shade === prefs.shading);
 }
 
 function setShading(mode) {
   prefs.shading = mode;
   savePrefs();
   view.setShading(mode);
-  if (view.mode !== 'mesh') setMode('mesh');
+  if (view.mode === 'lines') setMode('mesh');
   for (const b of document.querySelectorAll('[data-shade]')) b.setAttribute('aria-pressed', b.dataset.shade === mode);
+}
+
+// The LOD button reads LOD1, LOD2... and lights up while the view is not at LOD0.
+function showLod() {
+  doc.viewLod = Math.min(doc.viewLod, doc.lods - 1);
+  const b = $('[data-act=lod]'); const n = doc.viewLod;
+  b.textContent = n ? `LOD${n}` : 'LOD';
+  b.setAttribute('aria-pressed', n > 0);
 }
 
 const press = (act, on) => $(`[data-act=${act}]`).setAttribute('aria-pressed', on);
@@ -818,13 +847,15 @@ $('#backup [data-save]').addEventListener('click', async () => {
 
 // ---- Events ----
 on('graph', () => graph.invalidate());
-on('selection', () => { graph.invalidate(); view.highlight(); });
+// The touch Delete button shows while a node or a wire is picked, since fingers have no Delete key.
+const showDel = () => { const b = $('[data-nav=g-del]'); if (b) b.hidden = !(graph.touch && (doc.sel.size || doc.link)); };
+on('selection', () => { graph.invalidate(); view.highlight(); showDel(); });
 on('result', (res) => {
   renderer.refresh();
   view.apply(res);
   scanBake.refresh();
   const s = res.stats;
-  $('#stats').textContent = `${s.lines.toLocaleString('en')} lines · ${s.tris.toLocaleString('en')} triangles · ${s.ms} ms${s.draft ? ' · draft' : ''}`;
+  $('#stats').textContent = `${s.lines.toLocaleString('en')} lines · ${s.tris.toLocaleString('en')} triangles · ${s.ms} ms${s.draft ? ' · draft' : ''}${doc.viewLod ? ` · showing LOD${doc.viewLod}` : ''}`;
   const warn = $('#warn');
   warn.hidden = !res.warnings.length;
   warn.textContent = res.warnings[0] || '';
@@ -832,6 +863,7 @@ on('result', (res) => {
   $('#building').hidden = true;
   $('[data-act=manual]').classList.remove('stale');
 });
+on('result', showLod);
 on('build-start', () => { $('#building').hidden = false; });
 on('build-error', (msg) => { $('#building').hidden = true; toast(`The tree could not be built: ${String(msg).split('\n')[0]}`, 6000); });
 on('stale', () => $('[data-act=manual]').classList.add('stale'));
@@ -991,9 +1023,9 @@ async function importMeshFile() {
 const actions = {
   new: () => startFresh(),
   open: async (btn) => menu(under(btn), [
-    { label: 'Open from file…', fn: openFile },
-    { label: 'Add nodes from a file…', fn: importNodes },
-    { label: 'Library…', fn: () => library.show() },
+    { label: 'Canopy File…', fn: openFile },
+    { label: 'Node File…', fn: importNodes },
+    { label: 'View Library', fn: () => library.show() },
   ]),
   save: () => saveFile(),
   import: importMeshFile,
@@ -1002,35 +1034,52 @@ const actions = {
     backupEl.hidden = false;
   },
   addSpline: () => addFromBar('Spline'),
-  // A Growth tree: a Spline that grows itself (engine/growth.js), with leaves on the young wood.
+  // A Growth tree: a Growth node that grows the trunk and branches (engine/growth.js), with a leaf Spline on them.
   addGrowth: () => {
     const w = graph.toWorld(stage.getBoundingClientRect().width * 0.25, stage.getBoundingClientRect().height * 0.3);
-    const t = newNode('Spline', w.x, w.y);
-    Object.assign(t.params, GROWTH_PRESETS.Birch, { growOn: true, blendOffset: 0 });
+    const t = newNode('Growth', w.x, w.y);
+    Object.assign(t.params, GROWTH_PRESETS.Birch, { blendOffset: 0 });
     t.name = 'Growth tree';
     const l = newNode('Spline', w.x + NODE_W + 110, w.y);
-    Object.assign(l.params, { place: 'spline', start: 50, end: 100, density: 14, length: 7, meshType: 'leaf', width: 2.2, segMode: 'absolute', segCount: 6, tilt: 50 });
+    Object.assign(l.params, { place: 'spline', start: 20, end: 100, density: 18, length: 7, meshType: 'leaf', width: 2.2, segMode: 'absolute', segCount: 6, tilt: 50 });
     l.name = 'Leaves';
     const bark = newMaterial('Growth bark', { color: '#8a7a68' }); const leaf = newMaterial('Growth leaves', { color: '#4f8a35' });
     (doc.graph.materials ||= []).push(bark, leaf);
     t.params.material = bark.id; l.params.material = leaf.id;
     connect(t.id, 'children', l.id, 'parent');
     settleNew(t);
-    toast('A Growth tree: pick a species or tune it on its Growth tab.', 5000);
+    toast('A Growth tree: pick a species on its Growth tab, then steer it with the first few settings.', 5000);
   },
   materials: () => matEditor.open(primary()?.params?.material),
   cutouts: () => {
     const mats = (doc.graph.materials || []).filter((m) => m.texture);
-    const m = mats.find((x) => x.id === primary()?.params?.material) || mats.find((x) => x.cutouts?.length || !String(x.texture).startsWith('bark:')) || mats[0];
+    // A picked node's material opens even without a picture: its meshes are then drawn by hand.
+    const m = (doc.graph.materials || []).find((x) => x.id === primary()?.params?.material) || mats.find((x) => x.cutouts?.length || !String(x.texture).startsWith('bark:')) || mats[0];
     if (m) editCutouts(m); else toast('No material has a picture yet. Make one in the material editor and load a leaf picture into its Color slot.', 5000);
   },
   bake: () => bake.open(),
   pack: () => packer.open(),
+  uv: () => uvEditor.open(),
   addMesh: () => addFromBar('Mesh'),
   addMix: () => { const r = stage.getBoundingClientRect(); const w = graph.toWorld(r.width * 0.3, r.height * 0.4); settleNew(newNode('Mix', w.x, w.y)); },
   wind(btn) { const on = btn.getAttribute('aria-pressed') !== 'true'; press('wind', on); view.setWind(on); placeDials(); },
-  wire(btn) { const on = btn.getAttribute('aria-pressed') !== 'true'; press('wire', on); view.setWireframe(on); },
   scale(btn) { scaleOn = btn.getAttribute('aria-pressed') !== 'true'; press('scale', scaleOn); showScale(); },
+  // Which LOD the 3D view shows, and how many the plant has (saved with it).
+  lod(btn) {
+    const r = btn.getBoundingClientRect(); const s = stage.getBoundingClientRect();
+    const back = r.left - s.left > s.width / 2;
+    // Stays open, so LODs can be stepped through and added in a row.
+    const again = () => actions.lod(btn);
+    const show = (n) => { doc.viewLod = n; showLod(); regenerate({ force: true }); again(); };
+    const count = (n) => { doc.lods = n; showLod(); changed(); commit(); again(); };
+    menu({ x: back ? r.left - s.left - 6 : r.right - s.left + 6, y: r.top - s.top, back }, [
+      { head: 'Show in the 3D view' },
+      ...Array.from({ length: doc.lods }, (_, i) => ({ label: `LOD${i}`, on: i === doc.viewLod, keep: true, fn: () => show(i) })),
+      { sep: true },
+      { label: 'Add a LOD', disabled: doc.lods >= 8, keep: true, fn: () => count(doc.lods + 1) },
+      { label: `Remove LOD${doc.lods - 1}`, disabled: doc.lods <= 1, keep: true, fn: () => count(doc.lods - 1) },
+    ]);
+  },
   export: () => openExport(view, toast),
   savePreset: () => seedPresets.save(),
   xform() {
@@ -1083,7 +1132,7 @@ document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-act]');
   if (b) { closePopups(); actions[b.dataset.act](b); return; }
   const m = e.target.closest('[data-mode]');
-  if (m) { setMode(view.mode === 'lines' ? 'mesh' : 'lines'); return; }
+  if (m) { setMode('lines'); return; }
   const s = e.target.closest('[data-shade]');
   if (s) { setShading(s.dataset.shade); return; }
   const l = e.target.closest('[data-layout-btn]');
@@ -1094,10 +1143,12 @@ $('#doc-name').addEventListener('change', (e) => { doc.name = e.target.value || 
 new ResizeObserver(layout).observe(stage);
 
 // ---- Start ----
-for (const k of ['snap', 'ui', 'text', 'varShow', 'graphDim', 'fadeStrength', 'exposure', 'shadows', 'navAt', 'units', 'windDir', 'theme', 'grid', 'gizmo', 'focus', 'toolGroups', 'wireColor', 'gizmoSize', 'sunYaw', 'navY2d', 'groundOn', 'barAt', 'glow', 'undoSteps']) applyPref(k);
+for (const k of ['snap', 'ui', 'text', 'varShow', 'graphDim', 'fadeStrength', 'exposure', 'shadows', 'navAt', 'units', 'windDir', 'theme', 'grid', 'gizmo', 'focus', 'toolGroups', 'wireColor', 'gizmoSize', 'sunYaw', 'navY2d', 'groundOn', 'barAt', 'glow', 'undoSteps', 'xfBox']) applyPref(k);
 if (prefs.backupOn) startQuietBackups();
 if (prefs.aiBridge) startBridge(aiApi());
-setShading(prefs.shading);
+// Wireframe was a look of its own before; Wiremesh shows the same edges.
+setShading(prefs.shading === 'wireframe' ? 'wiremesh' : prefs.shading);
+if (prefs.splines) setMode('lines');
 ui.status('graph');
 layout();
 

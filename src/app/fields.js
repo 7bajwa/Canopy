@@ -1,6 +1,23 @@
 // Small form parts shared by the pop-ups, Settings and the cutout editor.
 export const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 
+// A mouse drag locks the pointer so it keeps going past the screen edge; touch and pen never lock, and a refused lock leaves a plain drag.
+export function lockDrag(target, e) {
+  if (e.pointerType !== 'mouse' || !target.requestPointerLock || document.pointerLockElement) return;
+  try { target.requestPointerLock()?.catch?.(() => {}); } catch { /* not allowed here */ }
+}
+export const unlockDrag = () => { if (document.pointerLockElement) document.exitPointerLock(); };
+// How far a drag moved since the last event, locked or not. The event where the lock starts or ends moves nothing, so nothing jumps.
+export const dragStart = (e) => ({ x: e.clientX, y: e.clientY, locked: !!document.pointerLockElement });
+export function dragStep(d, e) {
+  const locked = !!document.pointerLockElement;
+  const same = locked === d.locked;
+  const dx = !same ? 0 : locked ? e.movementX : e.clientX - d.x;
+  const dy = !same ? 0 : locked ? e.movementY : e.clientY - d.y;
+  d.locked = locked; d.x = e.clientX; d.y = e.clientY;
+  return [dx, dy];
+}
+
 // A number field: drag the label to scrub, type in the box, arrows to nudge. toText and fromText change how it reads, not what it stores.
 export function numberField(label, value, opts, onChange, onDone) {
   const row = el('div', 'field num');
@@ -46,12 +63,15 @@ export function numberField(label, value, opts, onChange, onDone) {
     target.setPointerCapture(e.pointerId);
     const x0 = e.clientX; const base = cur;
     const step = ranged ? (max - min) / 240 : Math.max(Math.abs(base) * 0.006, isInt ? 0.12 : 0.01);
-    let moved = false;
+    let moved = false; let acc = base; const d = dragStart(e);
+    // Shift moves in tenth steps from where the value is now, so pressing it mid-drag does not jump.
     const move = (ev) => {
-      if (Math.abs(ev.clientX - x0) > 2) moved = true;
-      if (moved) set(base + (ev.clientX - x0) * step * (ev.shiftKey ? 0.15 : 1), true);
+      const [dx] = dragStep(d, ev);
+      if (!moved && Math.abs(ev.clientX - x0) > 2) { moved = true; lockDrag(target, ev); }
+      if (moved) { acc += dx * step * (ev.shiftKey ? 0.1 : 1); set(acc, true); }
     };
     const up = () => {
+      unlockDrag();
       target.removeEventListener('pointermove', move);
       target.removeEventListener('pointerup', up);
       target.removeEventListener('pointercancel', up);

@@ -2,6 +2,7 @@
 // brightness square, a hue strip, and the values in Hex, RGB or HSV; every number drags sideways to change (Shift
 // is finer) and takes typing on a click. It stands in for the browser's own picker on every color box in the app.
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+import { lockDrag, unlockDrag, dragStart, dragStep } from './fields.js';
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 
 export const hexToRgb = (h) => { const n = parseInt(String(h || '#ffffff').slice(1, 7), 16) || 0; return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
@@ -34,7 +35,24 @@ export function openColor(anchor, value, { onInput, onChange } = {}) {
   const head = el('div', 'cp-head'); const swatch = el('span', 'cp-swatch');
   const tabs = el('div', 'cp-tabs');
   const fields = el('div', 'cp-fields');
-  head.append(swatch, tabs);
+  const iconBtn = (title, svg, fn) => {
+    const b = el('button', 'mini cp-icon'); b.type = 'button'; b.title = title; b.setAttribute('aria-label', title);
+    b.innerHTML = `<svg viewBox="0 0 24 24">${svg}</svg>`; b.addEventListener('click', fn);
+    return b;
+  };
+  const dice = iconBtn('Random color', '<rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="9" cy="9" r="1.2"/><circle cx="15" cy="15" r="1.2"/><circle cx="15" cy="9" r="1.2"/><circle cx="9" cy="15" r="1.2"/>', () => {
+    h = Math.random() * 360; s = 0.45 + Math.random() * 0.3; v = 0.75 + Math.random() * 0.2; changedNow(false);
+  });
+  // The system color picker, for people who prefer it; the hidden input is never clicked, so takeOverColorInputs leaves it alone.
+  const sys = el('input'); sys.type = 'color'; sys.hidden = true;
+  sys.addEventListener('input', () => { [h, s, v] = rgbToHsv(...hexToRgb(sys.value)); changedNow(true); });
+  sys.addEventListener('change', () => { [h, s, v] = rgbToHsv(...hexToRgb(sys.value)); changedNow(false); });
+  const picker = iconBtn('System color picker', '<path d="M12 3a9 9 0 1 0 0 18c1.2 0 2-.8 2-1.8 0-1.2-1-1.6-1-2.7 0-.9.8-1.5 1.7-1.5H17a4 4 0 0 0 4-4C21 6.6 17 3 12 3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7" r="1"/>', () => {
+    sys.value = hex();
+    try { sys.showPicker(); } catch { picker.hidden = true; }
+  });
+  picker.hidden = typeof sys.showPicker !== 'function';
+  head.append(swatch, dice, picker, sys, tabs);
   pop.append(sv, hue, head, fields);
   // Typing here never reaches the editor's shortcuts.
   pop.addEventListener('keydown', (e) => e.stopPropagation());
@@ -78,16 +96,17 @@ export function openColor(anchor, value, { onInput, onChange } = {}) {
     i.addEventListener('pointerdown', (e) => {
       if (document.activeElement === i) return;
       e.preventDefault(); i.setPointerCapture(e.pointerId);
-      d = { x: e.clientX, v: parseFloat(read()) || 0, moved: false };
+      d = { x: e.clientX, v: parseFloat(read()) || 0, moved: false, drag: dragStart(e) };
     });
     i.addEventListener('pointermove', (e) => {
       if (!d) return;
-      const dx = e.clientX - d.x;
-      if (!d.moved && Math.abs(dx) < 3) return;
-      d.moved = true;
-      write(clamp(d.v + dx * step * (e.shiftKey ? 0.1 : 1), lo, hi)); changedNow(true);
+      if (!d.moved && Math.abs(e.clientX - d.x) < 3) return;
+      if (!d.moved) { d.moved = true; lockDrag(i, e); }
+      // Summed per event so Shift fine steps start from the current value instead of jumping.
+      d.v = clamp(d.v + dragStep(d.drag, e)[0] * step * (e.shiftKey ? 0.1 : 1), lo, hi);
+      write(d.v); changedNow(true);
     });
-    i.addEventListener('pointerup', () => { if (!d) return; const was = d; d = null; if (was.moved) changedNow(false); else { i.focus(); i.select(); } });
+    i.addEventListener('pointerup', () => { if (!d) return; unlockDrag(); const was = d; d = null; if (was.moved) changedNow(false); else { i.focus(); i.select(); } });
     const typed = () => { const n = parseFloat(i.value); if (Number.isFinite(n)) { write(clamp(n, lo, hi)); changedNow(false); } };
     i.addEventListener('change', typed);
     i.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { typed(); i.blur(); } if (e.key === 'Escape') close(); });

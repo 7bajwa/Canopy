@@ -2,7 +2,7 @@
 // the tree when over the tree, the graph everywhere else. Middle-drag always orbits the 3D view.
 import { doc, commit, changed, select, connect, removeLink, setRowValue, nodeById, emit, removeNodes, duplicate, undo, redo, groupSelected, regenerate, selected, mergeNodes } from './doc.js';
 import { describeHit, rowBox } from './graphview.js';
-import { kindFits } from '../graph/schema.js';
+import { lockDrag, unlockDrag, dragStart, dragStep } from './fields.js';
 
 const WHEEL_LATCH = 280;
 const TAP_MOVE = 6;
@@ -58,6 +58,7 @@ export function attachInput(stage, graph, view, ui) {
     const p = pos(e);
     state.mouse = p;
     pointers.set(e.pointerId, { ...p, type: e.pointerType });
+    state.drag = e.pointerType === 'mouse' ? dragStart(e) : null;
     const finger = e.pointerType === 'touch' || e.pointerType === 'pen';
     if (finger) {
       // Otherwise the mouse events a browser adds after a tap take focus from a field that tap just opened.
@@ -99,6 +100,7 @@ export function attachInput(stage, graph, view, ui) {
     }
     if (hit?.part === 'fold') { hit.node.view = ((hit.node.view ?? 1) + 1) % 3; changed({ layout: true, rebuild: false }); commit(); return; }
     if (hit?.part === 'power') { hit.node.on = hit.node.on === false; changed(); commit(); return; }
+    if (hit?.part === 'mute') { if (hit.node.mute) delete hit.node.mute; else hit.node.mute = true; changed(); commit(); return; }
     if (hit?.part === 'group') { startMove(hit.group.nodes.map(nodeById).filter(Boolean), p); select(hit.group.nodes); return; }
     if (hit?.part === 'link') { doc.sel = new Set(); doc.link = hit.link.id; emit('selection'); graph.invalidate(); return; }
     if (hit?.node) {
@@ -126,11 +128,12 @@ export function attachInput(stage, graph, view, ui) {
     state.gesture = { kind: 'box', start: p, mode: e.shiftKey ? 'add' : e.ctrlKey || e.metaKey ? 'toggle' : 'set' };
   }
 
-  // A value's own menu from its row; the node's menu from its title bar; otherwise the add menu.
+  // A value's own menu from its row, a section's from its heading, the node's only from its title bar; off nodes the add menu.
   function pressMenu(p, hit) {
     if (hit?.part === 'row' && hit.row.param && !hit.row.mod) ui.paramMenu(p, hit.node, hit.row, hit.zone);
-    else if (hit?.node) ui.nodeMenu(p, hit.node);
-    else ui.addMenu(p);
+    else if (hit?.part === 'row' && hit.row.section) ui.sectionMenu?.(p, hit.node, hit.row.section);
+    else if (hit?.node && ['header', 'power', 'mute', 'fold'].includes(hit.part)) ui.nodeMenu(p, hit.node);
+    else if (!hit?.node) ui.addMenu(p);
   }
 
   // Holding a finger still opens the same menu a right-click would.
@@ -148,9 +151,9 @@ export function attachInput(stage, graph, view, ui) {
 
   function startWire(hit, p) {
     const { node, sock } = hit;
-    // Grabbing a connected input picks its wire up again, so it can be moved or dropped off.
-    if (sock.dir === 'in' && !sock.multi) {
-      const old = doc.graph.links.find((l) => l.to === node.id && l.toSock === sock.k);
+    // Grabbing a connected input picks its wire up again (the newest, when it has several), so it can be moved or dropped off.
+    if (sock.dir === 'in') {
+      const old = doc.graph.links.findLast((l) => l.to === node.id && l.toSock === sock.k);
       if (old) {
         const from = nodeById(old.from);
         removeLink(old.id);
@@ -170,11 +173,6 @@ export function attachInput(stage, graph, view, ui) {
     state.gesture = { kind: 'wire', node, sock, last: p };
     graph.invalidate();
   }
-
-  const wireFits = (sock, d = graph.drag) => {
-    if (sock.dir === d.dir) return false;
-    return d.dir === 'out' ? kindFits(d.kind, sock) : kindFits(sock.kind, { kind: d.kind, also: d.also });
-  };
 
   const scrubBy = (p, base, param, write, tap) => {
     state.gesture = { kind: 'scrub', start: p, base, param, write, tap, moved: false };
@@ -282,14 +280,18 @@ export function attachInput(stage, graph, view, ui) {
 
   // ---- Move ----
   stage.addEventListener('pointermove', (e) => {
-    const p = pos(e);
+    let p = pos(e);
+    // Once a mouse drag locks the pointer, its position is the press point plus the summed movement, so it never stops at the screen edge.
+    const dr = e.pointerType === 'mouse' ? state.drag : null;
+    if (dr) { const [mx, my] = dragStep(dr, e); if (dr.p) p = dr.p = { x: dr.p.x + mx, y: dr.p.y + my }; }
+    const lock = () => { if (dr && !dr.p) { dr.p = p; lockDrag(stage, e); } };
     state.mouse = p;
     if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { ...p, type: e.pointerType });
     const g = state.gesture;
     if (!g) { ui.gizmo?.pointer('hover', p); hoverUpdate(p, e); return; }
     switch (g.kind) {
       case 'gizmo': ui.gizmo.pointer('move', p); break;
-      case 'orbit': view.orbitBy(p.x - g.last.x, p.y - g.last.y); g.last = p; break;
+      case 'orbit': lock(); view.orbitBy(p.x - g.last.x, p.y - g.last.y); g.last = p; break;
       case 'orbit-or-tap':
         if (Math.hypot(p.x - g.start.x, p.y - g.start.y) > TAP_MOVE) g.moved = true;
         if (g.moved) view.orbitBy(p.x - g.last.x, p.y - g.last.y);
@@ -303,7 +305,7 @@ export function attachInput(stage, graph, view, ui) {
       case 'pan': {
         const dx = p.x - g.last.x; const dy = p.y - g.last.y;
         if (Math.hypot(p.x - g.start.x, p.y - g.start.y) > TAP_MOVE) g.moved = true;
-        if (g.moved) { if (g.zone === 'tree') view.panBy(dx, dy); else graph.panBy(dx, dy); }
+        if (g.moved) { lock(); if (g.zone === 'tree') view.panBy(dx, dy); else graph.panBy(dx, dy); }
         g.last = p;
         showZone(g.zone);
         break;
@@ -321,10 +323,9 @@ export function attachInput(stage, graph, view, ui) {
         break;
       }
       case 'wire': {
-        const w = graph.toWorld(p.x, p.y);
-        const hit = graph.hit(p.x, p.y);
-        const fit = hit?.part === 'socket' && wireFits(hit.sock) && hit.node.id !== graph.drag.nodeId;
-        graph.drag.to = fit ? graph.socketPos(hit.node, hit.sock.k) : w;
+        const t = graph.snapTarget(p.x, p.y);
+        graph.drag.target = t;
+        graph.drag.to = t ? graph.socketPos(t.node, t.sock.k) : graph.toWorld(p.x, p.y);
         graph.invalidate();
         break;
       }
@@ -332,9 +333,13 @@ export function attachInput(stage, graph, view, ui) {
         const dx = p.x - g.start.x;
         if (!g.moved && Math.abs(dx) < 3) break;
         g.moved = true;
+        lock();
         const { param } = g;
         const step = param.max !== undefined && param.min !== undefined ? (param.max - param.min) / 260 : Math.max(Math.abs(g.base) * 0.006, param.int ? 0.12 : 0.01);
-        let v = g.base + dx * step * (e.shiftKey ? 0.15 : 1);
+        // Shift moves in tenth steps from wherever the value is now, so pressing it mid-drag does not jump.
+        g.acc = (g.acc ?? g.base) + (p.x - (g.lastX ?? g.start.x)) * step * (e.shiftKey ? 0.1 : 1);
+        g.lastX = p.x;
+        let v = g.acc;
         if (param.int) v = Math.round(v);
         else v = +v.toFixed(3);
         if (param.min !== undefined) v = Math.max(param.min, v);
@@ -359,7 +364,7 @@ export function attachInput(stage, graph, view, ui) {
         const d = Math.hypot(a.x - b.x, a.y - b.y);
         const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
         const k = d / Math.max(g.d, 1);
-        if (g.zone === 'tree') { view.zoomAt(mid.x, mid.y, 1 / k); view.panBy(mid.x - g.mid.x, mid.y - g.mid.y); }
+        if (g.zone === 'tree') { view.zoomAt(mid.x, mid.y, 1 / k, true); view.panBy(mid.x - g.mid.x, mid.y - g.mid.y); }
         else { graph.zoomAt(mid.x, mid.y, k); graph.panBy(mid.x - g.mid.x, mid.y - g.mid.y); }
         g.d = d; g.mid = mid;
         break;
@@ -395,6 +400,7 @@ export function attachInput(stage, graph, view, ui) {
     pointers.delete(e.pointerId);
     clearTimeout(state.longPress);
     const g = state.gesture;
+    if (state.drag) { unlockDrag(); state.drag = null; }
     if (g?.kind === 'pinch') { if (pointers.size < 2) state.gesture = null; return; }
     state.gesture = null;
     stage.classList.remove('fade-tree');
@@ -404,7 +410,7 @@ export function attachInput(stage, graph, view, ui) {
       case 'orbit-or-tap':
         if (g.moved && g.kind === 'tree-tap' && ui.gizmo?.on && graph.box) {
           const b = graph.box; graph.box = null; graph.invalidate();
-          if (!ui.gizmo.pickBox(b, e.shiftKey)) ui.toast('No entities in that box. Pick the node, or draw the box around where branches and leaves start.');
+          if (!ui.gizmo.pickBox(b, e.shiftKey)) ui.toast('No entities in that box. Pick the node, or draw the box over the branches and leaves.');
           break;
         }
         if (!g.moved) {
@@ -440,8 +446,9 @@ export function attachInput(stage, graph, view, ui) {
   function finishWire(g, p) {
     const d = graph.drag;
     graph.drag = null;
-    const hit = graph.hit(p.x, p.y);
-    if (hit?.part === 'socket' && wireFits(hit.sock, d)) {
+    const t = graph.snapTarget(p.x, p.y, d);
+    const hit = t ? { part: 'socket', ...t } : graph.hit(p.x, p.y);
+    if (t) {
       const [a, as, b, bs] = d.dir === 'out' ? [g.node.id, g.sock.k, hit.node.id, hit.sock.k] : [hit.node.id, hit.sock.k, g.node.id, g.sock.k];
       const res = connect(a, as, b, bs);
       if (!res.ok) ui.toast(res.why);
@@ -543,7 +550,7 @@ export function attachInput(stage, graph, view, ui) {
     const { nodes, links } = JSON.parse(state.clip);
     const w = graph.toWorld(state.mouse.x, state.mouse.y);
     const x0 = Math.min(...nodes.map((n) => n.x)); const y0 = Math.min(...nodes.map((n) => n.y));
-    select(mergeNodes(nodes, links, w.x - x0, w.y - y0));
+    select(mergeNodes(nodes, links, w.x - x0, w.y - y0, true));
     changed({ layout: true });
     commit();
   }

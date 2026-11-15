@@ -230,3 +230,45 @@ export function contourCutouts(img, o = {}) {
   cutouts.sort((p, q) => p.top - q.top || p.left - q.left);
   return cutouts.map(({ top, left, ...c }, i) => meshAs({ ...c, name: `Leaf ${i + 1}` }, w, h));
 }
+
+const edgeDist = (poly, x, y) => {
+  let best = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i]; const b = poly[(i + 1) % poly.length];
+    const dx = b[0] - a[0]; const dy = b[1] - a[1];
+    const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+    best = Math.min(best, Math.hypot(x - a[0] - dx * t, y - a[1] - dy * t));
+  }
+  return best;
+};
+
+// Detects one cutout again with new settings: only the picture inside its outline (and a little around it) counts,
+// and the biggest leaf found there becomes its new shape. Its id, name, pivot, sprouts and LODs stay. Null if none.
+export function redetectCutout(img, cut, o = {}) {
+  const margin = Math.max(4, (o.segment ?? 24) / 2);
+  const pad = Math.ceil(margin + Math.max(0, o.padding ?? 2) + 2);
+  let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
+  for (const [x, y] of cut.outlinePx) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  x0 = Math.max(0, Math.floor(x0) - pad); y0 = Math.max(0, Math.floor(y0) - pad);
+  x1 = Math.min(img.width, Math.ceil(x1) + pad); y1 = Math.min(img.height, Math.ceil(y1) + pad);
+  const w = x1 - x0; const h = y1 - y0;
+  if (w < 2 || h < 2) return null;
+  // Work on the cutout's own box, so a big atlas stays quick.
+  const data = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const px = x + x0 + 0.5; const py = y + y0 + 0.5; const s = ((y + y0) * img.width + x + x0) * 4; const d = (y * w + x) * 4;
+      data[d] = img.data[s]; data[d + 1] = img.data[s + 1]; data[d + 2] = img.data[s + 2];
+      data[d + 3] = inPoly(cut.outlinePx, px, py) || edgeDist(cut.outlinePx, px, py) < margin ? img.data[s + 3] : 0;
+    }
+  }
+  const found = contourCutouts({ width: w, height: h, data }, o);
+  if (!found.length) return null;
+  const size = (c) => Math.abs(c.outlinePx.reduce((s, p, i, a) => { const q = a[(i + 1) % a.length]; return s + p[0] * q[1] - q[0] * p[1]; }, 0));
+  const best = found.reduce((a, b) => (size(b) > size(a) ? b : a));
+  const shift = (pts) => pts.map(([x, y]) => [x + x0, y + y0]);
+  return meshAs({
+    ...cut, outlinePx: shift(best.outlinePx), innerPx: shift(best.innerPx), holesPx: best.holesPx.map(shift),
+    faces: null, deform: undefined, auto: true, meshMode: cut.meshMode || 'mixed',
+  }, img.width, img.height);
+}

@@ -6,6 +6,7 @@ import { ShaderChunk } from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { threeTexture, threeMap, solidMap } from './textures.js';
 import { gustAt, WIND_STRIDE } from '../engine/wind.js';
+import { snowAt } from '../engine/life.js';
 import { bakeOcclusion } from './ao.js';
 import { windColors, lineExtents } from './exportkit.js';
 import { ScaleIndicator } from './scalefig.js';
@@ -14,6 +15,7 @@ const TREE_LAYER = 1;
 const MASK_CELL = 4; // CSS pixels per mask cell
 const ZONE_CELLS = 5; // how far around the tree still counts as "over the tree"
 const SUN_DIR = new THREE.Vector3(0.5, 1, 0.65).normalize();
+const UP = new THREE.Vector3(0, 1, 0);
 const WIND_ANGLE = 0.3; // radians of bend at the top of the wind's scale of 10
 const WIND_ROW = 1024; // lines per row of the wind table
 
@@ -85,6 +87,8 @@ export class Viewport {
     this.rect = { x: 0, y: 0, w: 1, h: 1 };
     this.bias = 0; this.biasY = 0;
     this.orbit = { yaw: 0.6, pitch: 0.12, dist: 1500, target: new THREE.Vector3(0, 300, 0) };
+    // 'local': turn and zoom about a point ahead, as deep as the plant; 'world': turn about the upright axis at the origin.
+    // 'lines' shows only the splines the plant grows from.
     this.mode = 'mesh';
     this.meshes = [];
     this.helpers = [];
@@ -98,7 +102,6 @@ export class Viewport {
     this.windClock = 0;
     this.gust = { min: 0, max: 10, freq: 6, speed: 1 };
     this.shading = 'pbr';
-    this.wireframe = false;
     this.scaleShow = 'off';
     this.units = 'metric';
     this.maskDirty = true;
@@ -241,6 +244,7 @@ export class Viewport {
   setShading(mode) {
     this.shading = mode;
     if (mode === 'gray') this.bakeAo();
+    this.updateWire();
     this.windView();
     this.highlight();
   }
@@ -268,9 +272,6 @@ export class Viewport {
     this.invalidate();
   }
 
-  // The wireframe lies on top of the shaded plant, in a color and strength from the settings.
-  setWireframe(on) { this.wireframe = on; this.updateWire(); this.invalidate(); }
-
   setWireLook(color, opacity) {
     this.wireLook = { color, opacity };
     if (this.wireMat) { this.wireMat.color.set(color); this.wireMat.opacity = opacity; }
@@ -280,7 +281,7 @@ export class Viewport {
   // The wireframe shows the faces export writes: quads where triangle pairs join (facesOf), so no diagonals.
   updateWire() {
     for (const m of this.meshes) for (const ch of [...m.children]) if (ch.userData.wire) { ch.geometry.dispose(); m.remove(ch); }
-    if (!this.wireframe) return;
+    if (this.shading !== 'wiremesh') return;
     this.wireMat ||= new THREE.LineBasicMaterial({ transparent: true, depthWrite: false, toneMapped: false });
     this.wireMat.color.set(this.wireLook?.color || '#000000');
     this.wireMat.opacity = this.wireLook?.opacity ?? 0.35;
@@ -379,8 +380,7 @@ export class Viewport {
     if (this.locked) return;
     this.anim = null;
     const hit = this.pointAt(x, y);
-    const f = THREE.MathUtils.clamp(factor, 0.2, 5);
-    const next = THREE.MathUtils.clamp(this.orbit.dist * f, 2, 60000);
+    const next = THREE.MathUtils.clamp(this.orbit.dist * THREE.MathUtils.clamp(factor, 0.2, 5), 2, 60000);
     const real = next / this.orbit.dist;
     if (hit) this.orbit.target.lerp(hit, 1 - real);
     this.orbit.dist = next;
@@ -415,7 +415,8 @@ export class Viewport {
   material(m, selected, flags) {
     const mm = m.material;
     const shade = this.shading;
-    const key = `${m.kind}|${JSON.stringify(mm)}|${selected}|${flags.blend}|${shade}|${this.wireframe}`;
+    const tint = shade === 'color' ? nodeColor(m.nodeId) : '';
+    const key = `${m.kind}|${JSON.stringify(mm)}|${selected}|${flags.blend}|${shade}|${tint}`;
     let mat = this.materials.get(key);
     if (mat) return mat;
     const leaf = m.kind === 'leaf';
@@ -424,14 +425,15 @@ export class Viewport {
     const map = mm.texture ? threeTexture(mm.texture, doc.assets, () => this.invalidate(), aniso) : null;
     // The diffuse alpha already carries opacity when both slots name the same image.
     const opacity = mm.opacityMap === mm.texture && mm.opacityCh === 'A' ? null : data(mm.opacityMap, mm.opacityCh);
-    const wire = false;
-    const cut = !wire && !!((leaf && map) || mm.opacityMap);
+    // Wiremesh shows the bare faces: no picture, no cutout, no see-through.
+    const solid = shade === 'wiremesh';
+    const cut = !solid && !!((leaf && map) || mm.opacityMap);
     const common = {
-      map, side: leaf || cut ? THREE.DoubleSide : THREE.FrontSide,
-      alphaTest: cut ? 0.32 : 0, alphaToCoverage: cut, alphaMap: opacity, wireframe: wire,
+      map: solid ? null : map, side: leaf || cut ? THREE.DoubleSide : THREE.FrontSide,
+      alphaTest: cut ? 0.32 : 0, alphaToCoverage: cut, alphaMap: solid ? null : opacity,
     };
     const see = mm.opacityColor ? parseInt(mm.opacityColor.slice(1, 3), 16) / 255 : 1;
-    if (see < 1) { common.transparent = true; common.opacity = see; }
+    if (see < 1 && !solid) { common.transparent = true; common.opacity = see; }
     if (shade === 'flat') {
       mat = new THREE.MeshBasicMaterial({ ...common, color: mm.color, vertexColors: true, toneMapped: false });
     } else if (shade === 'wind') {
@@ -439,7 +441,9 @@ export class Viewport {
     } else if (shade === 'gray') {
       mat = new THREE.MeshStandardMaterial({ ...common, color: 0xffffff, roughness: 0.92, metalness: 0 });
     } else if (shade === 'color') {
-      mat = new THREE.MeshStandardMaterial({ ...common, color: mm.color, roughness: 0.8, metalness: 0, vertexColors: true });
+      mat = new THREE.MeshStandardMaterial({ ...common, color: tint, roughness: 0.8, metalness: 0 });
+    } else if (solid) {
+      mat = new THREE.MeshStandardMaterial({ ...common, color: 0xc8ccc4, roughness: 0.9, metalness: 0 });
     } else {
       mat = new THREE.MeshStandardMaterial({
         ...common, color: mm.color, roughness: mm.roughness, metalness: 0, vertexColors: true,
@@ -457,7 +461,7 @@ export class Viewport {
     if (map && !mm.texture.startsWith('bark:')) defines.UNPREMUL = 1;
     if (shade === 'gray') defines.GRAY = 1;
     if (shade === 'wind') defines.WIND_VIEW = 1;
-    if (shade === 'color') defines.AVG_COLOR = 1;
+    if (shade === 'color') defines.NODE_COLOR = 1;
     // Subsurface is a color: black means none. It only shows in the full PBR view.
     const sss = new THREE.Color().setRGB(...[1, 3, 5].map((k) => parseInt((mm.sssColor || '#000000').slice(k, k + 2), 16) / 255), THREE.LinearSRGBColorSpace);
     const hasSss = shade === 'pbr' && (mm.sssMap || sss.r + sss.g + sss.b > 0);
@@ -590,12 +594,10 @@ export class Viewport {
           #ifdef UNPREMUL
             texel.rgb /= max(texel.a, 0.004);
           #endif
-          #ifdef AVG_COLOR
-            // A texture's average, from its smallest mip: the plain color it reads as from far away.
-            vec4 average = textureLod(map, vMapUv, 12.0);
-            texel.rgb = average.rgb / max(average.a, 0.02);
-          #endif
           diffuseColor *= texel;
+        #endif
+        #ifdef NODE_COLOR
+          diffuseColor.rgb = diffuse;
         #endif
         #ifdef GRAY
           diffuseColor.rgb = vec3(0.34) * vAo;
@@ -608,7 +610,7 @@ export class Viewport {
 
   apply(res) {
     const life = doc.graph.settings?.life;
-    this.u.uSnow.value = life?.on ? Math.min(1, Math.max(0, +life.snow || 0)) : 0;
+    this.u.uSnow.value = snowAt(life);
     const first = !this.box;
     for (const m of this.meshes) { m.geometry.dispose(); this.scene.remove(m); }
     for (const h of this.helpers) { h.geometry.dispose(); h.material.dispose(); this.scene.remove(h); }
@@ -635,8 +637,8 @@ export class Viewport {
       mesh.layers.enable(TREE_LAYER);
       mesh.castShadow = mesh.receiveShadow = true;
       mesh.customDepthMaterial = this.depthMaterial(m.kind === 'leaf' ? mesh.material.map : null);
-      mesh.visible = this.mode === 'mesh';
       this.scene.add(mesh);
+      mesh.visible = this.mode === 'mesh';
       this.meshes.push(mesh);
     }
     if (this.shading === 'wind') this.windView();
@@ -653,7 +655,7 @@ export class Viewport {
     this.scale.update(this.box, this.scaleShow, this.units);
     this.scale.place(this.camera);
     this.highlight();
-    if (this.wireframe) this.updateWire();
+    if (this.shading === 'wiremesh') this.updateWire();
     if (first || this.fitNext) { this.fitNext = false; this.frameAll(true); }
     this.renderer.shadowMap.needsUpdate = true;
     this.maskDirty = true;
@@ -765,9 +767,9 @@ export class Viewport {
   }
 
   showGround() {
-    const g = this.groundLook; const mesh = this.mode === 'mesh';
-    this.floor.visible = mesh && g.on && +g.opacity > 0;
-    this.ground.visible = mesh && g.shadow && this.renderer.shadowMap.enabled;
+    const g = this.groundLook; const on = this.mode === 'mesh';
+    this.floor.visible = on && g.on && +g.opacity > 0;
+    this.ground.visible = on && g.shadow && this.renderer.shadowMap.enabled;
     // Not while the view is still being made: its frame loop isn't bound yet.
     if (Object.hasOwn(this, 'loop')) this.invalidate();
   }
@@ -809,9 +811,9 @@ export class Viewport {
       this.scene.add(this.selLines);
     }
     // Paths and modifiers have no mesh of their own to tint, so a box shows what they reach.
-    const tinted = this.mode === 'mesh' && this.meshes.some((m) => doc.sel.has(m.userData.src.nodeId));
+    const tinted = this.meshes.some((m) => doc.sel.has(m.userData.src.nodeId));
     const b = this.boxOf([...doc.sel]);
-    if (b && !tinted && (!owners.size || this.mode === 'mesh')) {
+    if (b && !tinted) {
       this.selBox.box.min.set(b[0], b[1], b[2]);
       this.selBox.box.max.set(b[3], b[4], b[5]);
       this.selBox.visible = true;
@@ -934,7 +936,7 @@ export class Viewport {
   renderImage(size = 2048, opts = {}) {
     const W = Math.round(opts.width || size); const H = Math.round(opts.height || size);
     const keep = { rect: this.rect, bias: this.bias, biasY: this.biasY, sel: doc.sel, target: this.orbit.target.clone(), dist: this.orbit.dist, ground: this.ground.visible, floor: this.floor.visible, clear: this.renderer.getClearColor(new THREE.Color()), alpha: this.renderer.getClearAlpha(), map: this.floor.material.map, preview: this.preview.visible };
-    const hidden = [...this.helpers, ...(opts.hide || [])].filter((o) => o?.visible);
+    const hidden = [...this.helpers, this.lines, ...(opts.hide || [])].filter((o) => o?.visible);
     for (const o of hidden) o.visible = false;
     this.preview.visible = false;
     this.scale.group.visible = false;
@@ -981,6 +983,15 @@ export class Viewport {
     return url;
   }
 
+}
+
+// Each node's wire color, for the Colored view; a steady color from its id when it has none.
+function nodeColor(id) {
+  const w = doc.graph.nodes.find((n) => n.id === id)?.params?.wire;
+  if (/^#[0-9a-f]{6}$/i.test(w || '')) return w;
+  let h = 0;
+  for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return `#${new THREE.Color().setHSL((h % 360) / 360, 0.55, 0.55).getHexString()}`;
 }
 
 // The ground's picture: its color fading out toward the rim, with a faint 10 cm grid that fades with it.

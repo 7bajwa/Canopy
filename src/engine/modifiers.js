@@ -42,9 +42,12 @@ function turnToward(d, target, amount) {
   return [[ax[0] / l, ax[1] / l, ax[2] / l], Math.min(angle, amount)];
 }
 
+// Every cut keeps the line's nominal length, so the thickness at the cut stays as it was (a chopped branch, a
+// sliced leaf) instead of tapering to a point; what grew beyond it is gone with the points.
 export function cutAt(line, s, keepLength, capEnd) {
   const { pts, len: L, n } = line;
   if (s <= 0) { line.dead = true; return; }
+  if (s >= line.length) return;
   let k = 0;
   while (k < n - 1 && L[k + 1] < s) k++;
   sampleLine(line, s, S);
@@ -52,7 +55,8 @@ export function cutAt(line, s, keepLength, capEnd) {
   const end = new Float32Array(out.length + 3);
   end.set(out); end[out.length] = S.px; end[out.length + 1] = S.py; end[out.length + 2] = S.pz;
   line.pts = end;
-  if (!keepLength) line.nominal = s;
+  line.nominal ||= line.length;
+  line.cut = true;
   if (capEnd && capEnd !== 'none') line.capEnd = capEnd;
 }
 
@@ -67,8 +71,8 @@ function sliceStart(line, s, keepLength, capStart) {
   out[0] = S.px; out[1] = S.py; out[2] = S.pz;
   out.set(rest, 3);
   line.pts = out;
-  if (keepLength) line.tOff = (line.tOff || 0) + s;
-  else line.nominal = length - s;
+  line.nominal ||= length;
+  line.tOff = (line.tOff || 0) + s;
   if (capStart && capStart !== 'none') line.capStart = capStart;
 }
 
@@ -107,6 +111,8 @@ export function collideTarget(mode, d, n, gap = 0) {
 }
 
 const pickAngle =(ev, node, q, line, salt) => hash(ev.h(node), line.id, salt);
+// World axes as the gizmo names them (Z up).
+const GIZMO_AXES = { x: [1, 0, 0], y: [0, 0, -1], z: [0, 1, 0] };
 
 export const MODIFIERS = {
   Dir_Random(ev, node, line, q) {
@@ -183,45 +189,49 @@ export const MODIFIERS = {
     const spawns = deviationSpawnsFor(ev, node, line);
     ev.deviating = false;
     if (!spawns.length) return;
-    spawns.sort((a, b) => a.s - b.s);
     const angle = q.angle(c) * DEG;
-    const count = spawns.length;
-    // Each kink turns the rest of the line away from the child growing there.
-    let idx = 0;
-    walk(line, (i, s, t, d, p, seg) => {
-      const list = [];
-      while (idx < count && spawns[idx].s <= s + seg) {
-        const sp = spawns[idx++];
-        const side = sub(sp.d, mul(d, dot(sp.d, d)));
-        if (len(side) < 1e-4) continue;
-        const a = P.fromChild ? Math.acos(clamp(dot(sp.d, d), -1, 1)) * 0.2 : angle;
-        list.push([norm(cross(side, d)), a]);
+    const spread = Math.max(1, +(P.spread ?? 20));
+    // Each child pulls the stretch of line around it out toward the side the child grows on, as a smooth bump (a
+    // kink toward the child): the line keeps its course instead of every fork bending it further the same way.
+    const bumps = [];
+    for (const sp of spawns) {
+      sampleLine(line, sp.s, S);
+      const T = [S.tx, S.ty, S.tz];
+      // A child heading along the line (no tilt) still grows out on its own side of the bark.
+      let side = sub(sp.d, mul(T, dot(sp.d, T)));
+      if (len(side) < 1e-3 && sp.out) side = sub(sp.out, mul(T, dot(sp.out, T)));
+      if (len(side) < 1e-4) continue;
+      const a = Math.min(1.2, P.fromChild ? Math.acos(clamp(dot(sp.d, T), -1, 1)) * 0.5 : angle);
+      bumps.push([sp.s, mul(norm(side), Math.tan(a) * spread)]);
+    }
+    for (let i = 1; i < line.n; i++) {
+      const s = line.len[i]; const base = Math.min(1, s / spread);
+      for (const [s0, v] of bumps) {
+        const g = Math.exp(-(((s - s0) / spread) ** 2)) * base;
+        line.pts[i * 3] += v[0] * g; line.pts[i * 3 + 1] += v[1] * g; line.pts[i * 3 + 2] += v[2] * g;
       }
-      if (!list.length) return null;
-      return list[0];
-    });
+    }
   },
 
+  // Warp: Shape A bends the line to its side, Shape B the other way across it (Z), each by its height above where it starts.
   Dir_Spline(ev, node, line, q) {
     const P = node.params;
     const c = ev.setCtx(line, 0);
     const a = bakeCurve(P.shapeA); const b = bakeCurve(P.shapeB);
     const seed = ev.h(node);
-    const blend = clamp(q.blend(c), 0, 1);
     const scale = q.scale(c) * (1 - (q.scaleChaos(c) / 100) * hash(seed, line.id, 1));
     const orient = (q.orient(c) + q.orientChaos(c) * (hash(seed, line.id, 2) * 2 - 1)) * DEG;
     const dir = line.startDir;
     const side = rotate(perpendicular(dir), dir, orient);
+    const side2 = norm(cross(dir, side));
     const p0 = [line.pts[0], line.pts[1], line.pts[2]];
-    const base = sampleCurve(a, 0) * (1 - blend) + sampleCurve(b, 0) * blend;
+    const a0 = sampleCurve(a, 0); const b0 = sampleCurve(b, 0);
     const L = line.length;
     for (let i = 0; i < line.n; i++) {
       const t = L ? line.len[i] / L : 0;
-      const v = (sampleCurve(a, t) * (1 - blend) + sampleCurve(b, t) * blend - base) * L * scale;
+      const va = (sampleCurve(a, t) - a0) * L * scale; const vb = (sampleCurve(b, t) - b0) * L * scale;
       const k = i * 3;
-      line.pts[k] = p0[0] + dir[0] * line.len[i] * scale + side[0] * v;
-      line.pts[k + 1] = p0[1] + dir[1] * line.len[i] * scale + side[1] * v;
-      line.pts[k + 2] = p0[2] + dir[2] * line.len[i] * scale + side[2] * v;
+      for (let j = 0; j < 3; j++) line.pts[k + j] = p0[j] + dir[j] * line.len[i] * scale + side[j] * va + side2[j] * vb;
     }
   },
 
@@ -233,9 +243,16 @@ export const MODIFIERS = {
     const orient = q.orient(c) * DEG + hash(seed, line.id, 3) * (q.orient(c) ? 0 : Math.PI * 2);
     const applyStr = q.applyStrength(c);
     const applyV = norm(node.params.applyVector || [0, -1, 0]);
-    let done = false;
+    // Smoothness spreads the turn evenly over that length around the position, kept inside the line.
+    const L = line.length;
+    const sm = Math.min(Math.max(0, q.smooth ? q.smooth(c) : 0), L);
+    const a0 = sm > 0 ? clamp(pos - sm / 2, 0, L - sm) : pos; const a1 = a0 + sm;
+    let done = false; let axis = null;
     walk(line, (i, s, t, d, p, seg) => {
-      if (!done && s + seg >= pos) {
+      if (sm > 0) {
+        const over = Math.min(s + seg, a1) - Math.max(s, a0);
+        if (over > 0) { axis ||= rotate(perpendicular(d), d, orient); done = true; return [axis, angle * over / sm]; }
+      } else if (!done && s + seg >= pos) {
         done = true;
         return [rotate(perpendicular(d), d, orient), angle];
       }
@@ -244,15 +261,36 @@ export const MODIFIERS = {
     });
   },
 
-  // Droop: a cantilever under its own weight. The bend at a point grows with the square of the line still beyond it,
-  // so it arches from the base and the tip hangs; lines longer than Stiffness sag more.
+  // Droop: a cantilever under its own weight. The bend at a point grows with the line still beyond it and its
+  // lever (only the level part pulls, so a hanging tip settles straight down), over a stiffness that falls as the
+  // line thins toward its tip; lines longer than Stiffness sag more.
   Dir_Droop(ev, node, line, q) {
     const c = ev.setCtx(line, 0);
-    const k = q.strength(c) * (line.length / Math.max(1, q.stiffness(c)));
-    if (!k) return;
+    const L = line.length;
+    const k = q.strength(c) * (L / Math.max(1, q.stiffness(c)));
+    if (!k || !L) return;
     walk(line, (i, s, t, d, p, seg) => {
-      const rest = Math.max(0, 1 - s / line.length);
-      return turnToward(d, [0, -1, 0], k * rest * rest * (seg / line.length) * 1.5);
+      const rest = Math.max(0, 1 - s / L); const thick = 0.25 + 0.75 * rest;
+      const lever = Math.max(0.35, Math.hypot(d[0], d[2]));
+      return turnToward(d, [0, -1, 0], k * (rest * rest) / (thick * thick) * lever * (seg / L));
+    });
+  },
+
+  // Curl: the line turns about one axis by Turns over its length, its curvature growing toward the tip by Tighten
+  // (1 / (1 - k t), scaled so the whole line still makes the set turns), like a fern bud or a tendril.
+  Dir_Curl(ev, node, line, q) {
+    const P = node.params;
+    const c = ev.setCtx(line, 0);
+    const L = line.length;
+    if (!L) return;
+    const tight = clamp(q.tighten(c) / 100, 0, 1) * 0.9;
+    const W = tight > 0 ? -Math.log(1 - tight) / tight : 1;
+    const orient = (q.orient(c) + q.orientChaos(c) * (hash(ev.h(node), line.id, 1) * 2 - 1)) * DEG;
+    let axis = GIZMO_AXES[P.axis] || null;
+    walk(line, (i, s, t, d, p, seg) => {
+      c.t = t;
+      axis ||= rotate(perpendicular(d), d, orient);
+      return [axis, q.turns(c) * Math.PI * 2 * (seg / L) / (W * (1 - tight * t))];
     });
   },
 
@@ -287,8 +325,8 @@ export const MODIFIERS = {
     const orient = q.orient(c) * DEG;
     const smoothing = Math.max(0.1, q.smoothing(c));
     let axis = null;
+    // The whole length bends, to the tip; its curve is the way to hold part of it straight.
     walk(line, (i, s, t, d, p, seg) => {
-      if (s >= smoothing) return null;
       c.t = t;
       if (!axis) axis = rotate(perpendicular(d), d, orient);
       return [axis, q.angle(c) * DEG * seg / smoothing];
@@ -299,6 +337,8 @@ export const MODIFIERS = {
     const c = ev.setCtx(line, 0);
     ensureFrames(line);
     const turn = q.turn(c) * DEG;
+    const A = GIZMO_AXES[node.params.axis];
+    const e1 = A && perpendicular(A); const e2 = A && cross(A, e1);
     const out = line.pts.slice();
     for (let i = 0; i < line.n; i++) {
       c.t = line.length ? line.len[i] / line.length : 0;
@@ -306,25 +346,27 @@ export const MODIFIERS = {
       const r = q.radius(c) * Math.min(1, line.len[i] / Math.max(1e-3, q.radius(c)));
       const k = i * 3;
       const x = Math.cos(a) * r; const y = Math.sin(a) * r;
-      out[k] += line.U[k] * x + line.V[k] * y;
-      out[k + 1] += line.U[k + 1] * x + line.V[k + 1] * y;
-      out[k + 2] += line.U[k + 2] * x + line.V[k + 2] * y;
+      for (let j = 0; j < 3; j++) out[k + j] += A ? e1[j] * x + e2[j] * y : line.U[k + j] * x + line.V[k + j] * y;
     }
     line.pts = out;
   },
 
+  // Each step leaves the line at Angle (with its variation), alternately to one side and the other of the chosen axis.
   Dir_Zigzag(ev, node, line, q) {
     const c = ev.setCtx(line, 0);
+    const seed = ev.h(node);
     const steps = Math.max(0.5, q.steps(c));
-    const r = q.radius(c);
     resample(line, () => steps);
     finishLine(line);
     ensureFrames(line);
+    const F = node.params.axis === 'y' ? line.V : line.U;
     const out = line.pts.slice();
     for (let i = 1; i < line.n; i++) {
-      const sign = i % 2 ? 1 : -1;
+      c.t = line.length ? line.len[i] / line.length : 0;
+      const a = clamp(q.angle(c) + q.angleChaos(c) * (hash(seed, line.id, i) * 2 - 1), 0, 85) * DEG;
+      const h = Math.tan(a) * steps / 2 * (i % 2 ? 1 : -1);
       const k = i * 3;
-      out[k] += line.U[k] * r * sign; out[k + 1] += line.U[k + 1] * r * sign; out[k + 2] += line.U[k + 2] * r * sign;
+      out[k] += F[k] * h; out[k + 1] += F[k + 1] * h; out[k + 2] += F[k + 2] * h;
     }
     line.pts = out;
   },
@@ -414,12 +456,16 @@ export const MODIFIERS = {
     const c = ev.setCtx(line, 0);
     const D = Math.max(0.1, q.clearance(c)); const F = Math.max(0, +P.falloff || 0);
     const R = D + (P.mode === 'push' ? F : 0);
+    // Against: lines of this node, of the other nodes, or all of them; each choice keeps its own grid.
+    const w = P.with === 'same node' || P.with === 'other nodes' ? P.with : 'everything';
     const grids = (ev.avoidGrids ||= new Map());
-    let G = grids.get(R);
-    if (!G) { G = { cells: new Map(), done: 0 }; grids.set(R, G); }
+    const gk = w === 'everything' ? R : `${R}|${w}|${line.node.id}`;
+    let G = grids.get(gk);
+    if (!G) { G = { cells: new Map(), done: 0 }; grids.set(gk, G); }
     const key = (x, y, z) => (Math.floor(x / R) * 73856093) ^ (Math.floor(y / R) * 19349663) ^ (Math.floor(z / R) * 83492791);
     for (; G.done < ev.lines.length; G.done++) {
       const l = ev.lines[G.done]; const p = l.pts;
+      if (w !== 'everything' && (l.node === line.node) !== (w === 'same node')) continue;
       // Long segments are filled in, so a line can't slip between two far-apart points.
       for (let i = 0; i < p.length; i += 3) {
         const steps = i ? Math.max(1, Math.ceil(Math.hypot(p[i] - p[i - 3], p[i + 1] - p[i - 2], p[i + 2] - p[i - 1]) / (R * 0.5))) : 1;
@@ -462,44 +508,27 @@ export const MODIFIERS = {
       }
       return;
     }
-    // Push: each point out to the clearance (by what it lacks, scaled by Amount), fading over the falloff; then
-    // smoothed along the line over Spread so it bends aside rather than kinking. Smoothing thins the push, so it
-    // runs again (up to four passes) until no point past the base is still inside the clearance.
-    const n = line.n; const push = new Float32Array(n * 3);
-    const spread = Math.max(0, +(P.spread ?? 20));
-    for (let pass = 0; pass < 4; pass++) {
-      push.fill(0);
-      let any = false; let inside = false;
-      for (let i = 1; i < n; i++) {
-        if (line.len[i] < skip) continue;
-        c.t = line.length > 0 ? line.len[i] / line.length : 0;
-        const h = nearest(pts[i * 3], pts[i * 3 + 1], pts[i * 3 + 2]);
-        if (!h) continue;
-        if (h[3] < D * 0.98) inside = true;
-        const lack = h[3] < D ? D - h[3] : F > 0 ? (1 - (h[3] - D) / F) * D * 0.15 : 0;
-        if (lack <= 0) continue;
-        const away = h[3] > 1e-6 ? norm([pts[i * 3] - h[0], pts[i * 3 + 1] - h[1], pts[i * 3 + 2] - h[2]]) : [line.ux?.[i] ?? 1, 0, 0];
-        const m = clamp(q.strength(c) / 100, 0, 1) * lack * (pass ? 1 : 1.15);
-        push[i * 3] = away[0] * m; push[i * 3 + 1] = away[1] * m; push[i * 3 + 2] = away[2] * m; any = true;
-      }
-      if (!any) break;
-      // Spread: each point takes the strongest push near it, faded by distance along the line, so the line bows
-      // out smoothly around a touch at full strength instead of averaging it away.
-      const out = new Float32Array(n * 3);
-      let lo = 1;
-      for (let i = 1; i < n; i++) {
-        while (line.len[i] - line.len[lo] > spread * 3) lo++;
-        let best = 0;
-        for (let k = lo; k < n && line.len[k] - line.len[i] <= spread * 3; k++) {
-          const g = spread > 0 ? Math.exp(-(((line.len[k] - line.len[i]) / spread) ** 2)) : k === i ? 1 : 0;
-          const mag = Math.hypot(push[k * 3], push[k * 3 + 1], push[k * 3 + 2]) * g;
-          if (mag > best) { best = mag; out[i * 3] = push[k * 3] * g; out[i * 3 + 1] = push[k * 3 + 1] * g; out[i * 3 + 2] = push[k * 3 + 2] * g; }
-        }
-      }
-      for (let i = 0; i < n * 3; i++) pts[i] += out[i];
-      finishLine(line);
-      if (!inside) break;
-    }
+    // Push: the line is regrown step by step and, where its next point would come near another line, turns away
+    // from there on (mirrored off it when heading in), harder the closer it is; meeting another later, it turns
+    // away again. A long segment is checked at points along it, so it can't step through a line.
+    walk(line, (i, s, t, d, p, seg) => {
+      if (s < skip) return null;
+      c.t = t;
+      const k = clamp(q.strength(c) / 100, 0, 1);
+      if (!k) return null;
+      const m = Math.max(1, Math.ceil(seg / (D * 0.5)));
+      let h = null; let nx = null;
+      for (let j = 1; j <= m && !h; j++) { nx = [p[0] + d[0] * seg * j / m, p[1] + d[1] * seg * j / m, p[2] + d[2] * seg * j / m]; h = nearest(nx[0], nx[1], nx[2]); }
+      if (!h) return null;
+      const away = h[3] > 1e-6 ? norm(sub(nx, h)) : perpendicular(d);
+      const into = dot(d, away);
+      if (into >= 0 && h[3] >= D) return null;
+      const near = h[3] < D ? 1 : 1 - (h[3] - D) / Math.max(F, 1e-3);
+      let target = into < 0 ? norm(sub(d, mul(away, 2 * into))) : norm([d[0] + away[0], d[1] + away[1], d[2] + away[2]]);
+      // Head on, the mirror is straight back: lean it to one side so there is a way to turn.
+      if (len(cross(d, target)) < 1e-3) target = norm([target[0] + perpendicular(d)[0] * 0.5, target[1] + perpendicular(d)[1] * 0.5, target[2] + perpendicular(d)[2] * 0.5]);
+      return turnToward(d, target, Math.PI * 0.5 * k * near);
+    });
   },
 
   Dir_ObjSlice(ev, node, line, q) {
@@ -586,6 +615,15 @@ export const MODIFIERS = {
     if (line.dead) return;
     finishLine(line);
     if (start > 0 && hash(seed, line.id, 1) * 100 < q.startRate(c)) sliceStart(line, start, P.keepLength, P.capStart);
+  },
+
+  // Trim: a share of the lines (Lines cut) break off at Cut at, moved up or down by the variation.
+  Dir_Cut(ev, node, line, q) {
+    const c = ev.setCtx(line, 0);
+    const seed = ev.h(node);
+    if (hash(seed, line.id, 1) * 100 >= q.rate(c)) return;
+    const at = clamp((q.at(c) + q.atChaos(c) * (hash(seed, line.id, 2) * 2 - 1)) / 100, 0, 1);
+    if (at < 1) cutAt(line, at * line.length, true, 'none');
   },
 
   Dir_OptimizeSteps(ev, node, line, q) {

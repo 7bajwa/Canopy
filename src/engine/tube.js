@@ -253,7 +253,7 @@ function sidesOf(ev, job, line) {
   let sides = Math.round(ev.q(job.node).sides(ct));
   if (P.optimize) sides = Math.round((TWO_PI * line.radii[0]) / (+P.faceSize || 8));
   if (ev.draft) sides = Math.round(sides * 0.6);
-  if (ev.lod) sides = Math.round(sides * ev.lodKeep(line.node));
+  if (ev.lod) sides = Math.round(sides * ev.lodKeep(line.node, 'sides'));
   return clamp(sides, Math.max(3, Math.round(+P.minSides || 3)), 64);
 }
 
@@ -262,7 +262,7 @@ function facetScale(line, angle) {
   const n = line.meshSides;
   if (!n) return 1;
   const step = TWO_PI / n;
-  const a = ((angle % step) + step) % step;
+  const a = (((angle - (line.meshRot || 0)) % step) + step) % step;
   return Math.cos(step / 2) / Math.cos(a - step / 2);
 }
 
@@ -292,10 +292,18 @@ export function prepareJunctions(ev) {
   // Child rims follow the parent's real facets, so every parent's side count must be known first.
   for (const job of ev.jobs.values()) {
     if (job.node.type !== 'CylinderMesh') continue;
-    for (const line of job.lines) if (line.radii) line.meshSides = sidesOf(ev, job, line);
+    const tubeRot = ev.param(job.node, { k: 'tubeRot', d: 0, abs: true, along: 'pos' });
+    for (const line of job.lines) {
+      if (!line.radii || line.n < 2) continue;
+      line.meshSides = sidesOf(ev, job, line);
+      // The first column (the UV seam) goes on the side facing world up, where it shows least.
+      sampleLine(line, 0, P0);
+      const up = Math.hypot(P0.uy, P0.vy) > 0.05 ? Math.atan2(P0.vy, P0.uy) : 0;
+      line.meshRot = up + tubeRot(ev.setCtx(line, 0)) * (Math.PI / 180);
+    }
   }
-  // A tip tube takes its parent's side count, so its first ring lies on the parent's last one, point for point.
-  for (const job of ev.jobs.values()) for (const line of job.lines) if (line.parent?.tipChild === line && line.parent.meshSides) line.meshSides = line.parent.meshSides;
+  // A tip tube takes its parent's side count and turn, so its first ring lies on the parent's last one, point for point.
+  for (const job of ev.jobs.values()) for (const line of job.lines) if (line.parent?.tipChild === line && line.parent.meshSides) { line.meshSides = line.parent.meshSides; line.meshRot = line.parent.meshRot; }
   for (const job of ev.jobs.values()) {
     if (job.node.type !== 'CylinderMesh' || !job.comps.blend) continue;
     const q = ev.q(job.comps.blend);
@@ -318,13 +326,15 @@ export function prepareJunctions(ev) {
       const n0 = sinRaw > 0.02 ? norm([d[0] - T[0] * cosA, d[1] - T[1] * cosA, d[2] - T[2] * cosA]) : [P0.ux, P0.uy, P0.uz];
       const b0 = cross(T, n0);
       const phi0 = Math.atan2(n0[0] * P0.vx + n0[1] * P0.vy + n0[2] * P0.vz, n0[0] * P0.ux + n0[1] * P0.uy + n0[2] * P0.uz);
-      const hc = R / sinA;
+      // Distance along the branch to where it leaves the bark, from its real start (on the surface with onSurface).
+      const o0 = [line.pts[0] - P0.px, line.pts[1] - P0.py, line.pts[2] - P0.pz];
+      const hc = Math.max(0, R - dot(o0, n0)) / sinA;
       const L = q.length(c) * rb;
       const sEnd = Math.min(hc + L, line.length * 0.6);
-      if (sEnd < hc * 0.85) continue;
+      if (sEnd < hc * 0.85 || sEnd < 1e-3) continue;
       const flare = q.flare(c);
       const collar = ev.draft ? 0 : q.collar(c) * rb;
-      const s0 = clamp(line.parentS + hc * cosA, 0, parent.length);
+      const s0 = clamp(line.parentS + dot(o0, T) + hc * cosA, 0, parent.length);
       const reach = rb * (1.2 + flare) + L * 0.5;
       line.junction = {
         parent, R, rb, T, n0, b0, phi0, cosA, sinA, hc, sEnd, flare, s0: line.parentS,
@@ -358,8 +368,24 @@ function uvConfig(comps) {
   return {
     tileU: P ? +P.tileU || 1 : 2, absWidth: !!P?.absWidth, width: +P?.width || 40, flipU: !!P?.flipU, offU: +P?.offsetU || 0,
     absLength: P ? !!P.absLength : true, lengthV: +P?.lengthV || 60, tileV: P ? +P.tileV || 1 : 1, flipV: !!P?.flipV, offV: +P?.offsetV || 0,
-    byRadius: !!P?.scaleByRadius,
+    byRadius: !!P?.scaleByRadius, match: !!P?.uvMatch, fixU: P?.uvFix === 'U', fixV: P?.uvFix === 'V', angle: +P?.uvAngle || 0, ...tileRange(P),
   };
+}
+
+// Tile range: V below `from` is a unique base mapped once; above it the texture's from..to band repeats.
+function tileRange(P) {
+  const from = clamp(+(P?.uvTileFrom ?? 0), 0, 1); const to = clamp(+(P?.uvTileTo ?? 1), 0, 1);
+  return { from, span: (from > 0 || to < 1) && to - from > 1e-3 ? to - from : 0 };
+}
+
+// uvAngle turns UVs counterclockwise about (cu, cv), last of all: u' = cu + (u-cu)cos - (v-cv)sin, v' = cv + (u-cu)sin + (v-cv)cos; c = (0.5, 0.5), or a cutout's UV box center.
+export function rotateUv(uv, from, to, deg, cu = 0.5, cv = 0.5) {
+  if (!deg) return;
+  const c = Math.cos(deg * (Math.PI / 180)); const s = Math.sin(deg * (Math.PI / 180));
+  for (let i = from; i < to; i++) {
+    const u = uv[i * 2] - cu; const v = uv[i * 2 + 1] - cv;
+    uv[i * 2] = cu + u * c - v * s; uv[i * 2 + 1] = cv + u * s + v * c;
+  }
 }
 
 // Tiling and offsets can vary per line when the mesh node sets them, so each line reads its own.
@@ -369,11 +395,23 @@ function lineUv(base, q, c, P) {
 }
 
 // On Spline nodes, one tile of bark wraps half way round, which suits the built-in textures.
-const tileOf = (uv, r0, P) => (uv.absWidth ? Math.max(1, Math.round((TWO_PI * r0) / uv.width)) : uv.tileU) * (P.owned ? 2 : 1);
-const vOf = (uv, line, s) => {
-  const raw = uv.absLength ? (s / uv.lengthV) * uv.tileV : (s / Math.max(line.length, 1e-3)) * uv.tileV;
-  return (uv.flipV ? -raw : raw) + uv.offV;
-};
+// Even texel size: the trunk wraps 0..1 once and thinner lines take a share by thickness, so texels match everywhere.
+const tileOf = (uv, r0, P) => (uv.fixU ? 1 : uv.absWidth ? Math.max(1, Math.round((TWO_PI * r0) / uv.width)) * (P.owned ? 2 : 1) : uv.match ? uv.tileU * r0 / uv.rootR : uv.tileU * (P.owned ? 2 : 1));
+// V before tile range, flip and offset: once along the whole line with Fit V.
+const vRaw = (uv, line, s) => (uv.fixV ? s / Math.max(line.length, 1e-3) : uv.match ? (s / (TWO_PI * uv.rootR)) * uv.tileV : uv.absLength ? (s / uv.lengthV) * uv.tileV : (s / Math.max(line.length, 1e-3)) * uv.tileV);
+// A point right on a band edge ends that band (to), so the last ring of a line never drops back to from.
+const vMap = (uv, r) => (uv.span && r > uv.from ? uv.from + (((r - uv.from) % uv.span) || uv.span) : r);
+const vOut = (uv, m) => (uv.flipV ? -m : m) + uv.offV;
+const vOf = (uv, line, s) => vOut(uv, vMap(uv, vRaw(uv, line, s)));
+// Where the tile range wraps: a ring there is doubled, ending one band (to) and starting the next (from).
+function tileBreaks(uv, line, s0, s1) {
+  if (!uv.span) return [];
+  const k = vRaw(uv, line, 1) - vRaw(uv, line, 0);
+  if (k <= 1e-9 || (s1 * k - uv.from) / uv.span > 256) return [];
+  const out = [];
+  for (let n = 1; ; n++) { const s = (uv.from + n * uv.span) / k; if (s >= s1 - 1e-4) break; if (s > s0 + 1e-4) out.push(s); }
+  return out;
+}
 
 export function buildCylinders(ev, buf, job, lines) {
   const comps = job.comps;
@@ -395,12 +433,13 @@ export function buildCylinders(ev, buf, job, lines) {
     const R0 = line.radii[0];
     const sides = line.meshSides || sidesOf(ev, job, line);
     let cosSin = trig(sides);
-    const rotDeg = tubeRot(ct);
-    if (rotDeg) {
-      const a = rotDeg * (Math.PI / 180);
-      cosSin = cosSin.map((_, k) => (k % 2 ? cosSin[k - 1] * Math.sin(a) + cosSin[k] * Math.cos(a) : cosSin[k] * Math.cos(a) - cosSin[k + 1] * Math.sin(a)));
+    const rotA = line.meshRot ?? tubeRot(ct) * (Math.PI / 180);
+    if (rotA) {
+      const ca = Math.cos(rotA); const sa2 = Math.sin(rotA);
+      cosSin = cosSin.map((_, k) => (k % 2 ? cosSin[k - 1] * sa2 + cosSin[k] * ca : cosSin[k] * ca - cosSin[k + 1] * sa2));
     }
     const uv = lineUv(base0, q, ct, P);
+    if (uv.match) { let r = line; while (r.parent?.radii) r = r.parent; uv.rootR = Math.max(r.radii[0], 1e-3); }
 
     // Stations are the ring positions along the line; collars add a few so the swelling has geometry.
     let stations = [];
@@ -433,7 +472,7 @@ export function buildCylinders(ev, buf, job, lines) {
 
     // A line standing on the floor flares into it: more rings low down carry the spread and the roots.
     // Blend treats the floor as the parent of a line that has none: the same height, spread, roots and offset.
-    const fb = P.owned && P.blend && !line.parent && !j && cutStart <= 0 ? comps.blend?.params : null;
+    const fb = P.owned && P.blend && (!line.parent || line.surfaceN) && !j && cutStart <= 0 ? comps.blend?.params : null;
     const flare = fb && +fb.flare > 0 ? {
       H: Math.min(Math.max(0.1, +fb.length || 1.6) * R0, line.length * 0.9), spread: Math.max(0, +fb.flare) * R0,
       pow: 1 + 3 * clamp(+(fb.tension ?? 0.85), 0, 1), roots: Math.max(0, Math.round(+fb.roots || 0)), depth: clamp(+(fb.rootDepth ?? 0.45), 0, 1),
@@ -445,6 +484,8 @@ export function buildCylinders(ev, buf, job, lines) {
       stations.push(flare.H);
       stations = [...new Set(stations)].filter((s) => s >= 0 && s <= line.length).sort((a, b) => a - b);
     }
+    const breaks = new Set(tileBreaks(uv, line, Math.max(startS, cutStart), Math.min(cutEnd, line.length)));
+    if (breaks.size) stations = [...new Set([...stations, ...breaks])].sort((a, b) => a - b);
 
     // Round caps, as rings from the rim in to the middle. With a profile (Spline nodes) its curve gives the height
     // of each ring from the outside (left) to the middle (right), so a flat curve makes a flat cap; a border first
@@ -455,8 +496,10 @@ export function buildCylinders(ev, buf, job, lines) {
     const capStartList = !j && startCap === 'spherical' && line.radii[0] > 0.02 ? capProfile(P, 'capStart', ev.draft) : [];
     const capRings = capEndList.length; const startRings = capStartList.length;
     const discUv = P.capUv === 'disc';
-    const rings = (j ? K + 1 : 0) + startRings + stations.length + capRings;
+    const rings = (j ? K + 1 : 0) + startRings + stations.length + breaks.size + capRings;
     if (rings < 2) continue;
+    // ringBreak[i]: ring i + 1 is ring i again with other UVs, so no faces join them.
+    const ringBreak = new Uint8Array(rings);
     const verts = sides + 1;
     const rp = new Float32Array(rings * verts * 3);
     const rn = new Float32Array(rings * verts * 3);
@@ -540,10 +583,15 @@ export function buildCylinders(ev, buf, job, lines) {
           if (k) parentUV(x, y, z, near, pp);
           else { pp[0] = a0[7]; pp[1] = a0[6]; }
           near = pp[0];
-          const pu = (pp[0] / TWO_PI) * puvTile;
+          const pu = ((pp[0] - (parent.meshRot || 0)) / TWO_PI) * puvTile;
           uvP[(k * verts + v) * 2] = (uv.flipU ? -pu : pu) + uv.offU;
           uvP[(k * verts + v) * 2 + 1] = vOf(uv, parent, pp[1]);
-          forced[o] = a0[3]; forced[o + 1] = a0[4]; forced[o + 2] = a0[5];
+          // The parent's own normal under each fillet point, so the hand-over follows its curve, not the rim's.
+          if (k && k < K) {
+            const cp = Math.cos(pp[0]); const sp2 = Math.sin(pp[0]);
+            const fn = surfaceNormal(parent, pp[1], pp[0], j.R, [parentS.ux * cp + parentS.vx * sp2, parentS.uy * cp + parentS.vy * sp2, parentS.uz * cp + parentS.vz * sp2]);
+            forced[o] = fn[0]; forced[o + 1] = fn[1]; forced[o + 2] = fn[2];
+          } else { forced[o] = a0[3]; forced[o + 1] = a0[4]; forced[o + 2] = a0[5]; }
         }
       }
       for (let k = 0; k <= K; k++) {
@@ -599,6 +647,11 @@ export function buildCylinders(ev, buf, job, lines) {
       }
       ringV[r] = vOf(uv, line, s);
       ringT[r] = tOf(line, s);
+      if (breaks.has(s)) {
+        rp.copyWithin((r + 1) * verts * 3, r * verts * 3, (r + 1) * verts * 3);
+        ringV[r] = vOut(uv, uv.from + uv.span); ringV[r + 1] = vOut(uv, uv.from); ringT[r + 1] = ringT[r];
+        ringBreak[r++] = 1;
+      }
       r++;
     }
 
@@ -615,15 +668,28 @@ export function buildCylinders(ev, buf, job, lines) {
           rp[o + 1] = out.py + out.ty * lift + (out.uy * cs + out.vy * sn) * rr;
           rp[o + 2] = out.pz + out.tz * lift + (out.uz * cs + out.vz * sn) * rr;
         }
-        ringV[r] = vOf(uv, line, line.length + out.r * path);
+        // Runs on from the end ring without wrapping, so no cap face spans a tile-range jump.
+        const mEnd = vMap(uv, vRaw(uv, line, line.length));
+        ringV[r] = vOut(uv, mEnd + vRaw(uv, line, line.length + out.r * path) - vRaw(uv, line, line.length));
         ringT[r] = 1;
         r++;
       }
     }
 
+    // Welded: the seam column and a cap's tip ring sit exactly on their twins, so no gap can open between them.
+    const firstStation = (j ? K + 1 : 0) + startRings;
+    const isPole = (i) => ringCap[i] >= 0 && ringCap[i] < 1e-6;
+    for (let i = 0; i < rings; i++) {
+      const f = i * verts * 3;
+      for (let v = isPole(i) ? 1 : sides; v < verts; v++) { const o = f + v * 3; rp[o] = rp[f]; rp[o + 1] = rp[f + 1]; rp[o + 2] = rp[f + 2]; }
+    }
+    sampleLine(line, 0, out); const tS = [-out.tx, -out.ty, -out.tz];
+    sampleLine(line, line.length, out); const tE = [out.tx, out.ty, out.tz];
+
     // Smooth normals across the ring grid; the seam column wraps so it stays invisible.
     for (let i = 0; i < rings; i++) {
       const a = Math.max(i - 1, 0); const b = Math.min(i + 1, rings - 1);
+      const pole = isPole(i) ? (i < firstStation ? tS : tE) : null;
       for (let v = 0; v < sides; v++) {
         const o = (i * verts + v) * 3;
         const ol = (i * verts + (v + sides - 1) % sides) * 3;
@@ -637,10 +703,13 @@ export function buildCylinders(ev, buf, job, lines) {
         else if (i > 0) {
           const pv = ((i - 1) * verts + v) * 3;
           nx = rn[pv]; ny = rn[pv + 1]; nz = rn[pv + 2];
-        } else if (startRings) { sampleLine(line, 0, out); nx = -out.tx; ny = -out.ty; nz = -out.tz; } else { nx = 0; ny = 1; nz = 0; }
+        } else if (startRings) { nx = tS[0]; ny = tS[1]; nz = tS[2]; } else { nx = 0; ny = 1; nz = 0; }
+        // A cap's tip is one point: it faces straight out along the line.
+        if (pole) { nx = pole[0]; ny = pole[1]; nz = pole[2]; }
         if (j && i <= K) {
-          // The joint starts with the parent's normal so shading has no visible edge.
-          const w = (1 - smooth(i / K)) * j.shade;
+          // The joint starts with the parent's normal and hands over with a smootherstep (flat at both ends), so shading has no visible edge.
+          const t = i / K;
+          const w = (1 - t * t * t * (t * (t * 6 - 15) + 10)) * j.shade;
           const fo = (i * verts + v) * 3;
           nx += (forced[fo] - nx) * w; ny += (forced[fo + 1] - ny) * w; nz += (forced[fo + 2] - nz) * w;
           const mm = Math.hypot(nx, ny, nz) || 1;
@@ -651,6 +720,18 @@ export function buildCylinders(ev, buf, job, lines) {
       const f = i * verts * 3; const l = (i * verts + sides) * 3;
       rn[l] = rn[f]; rn[l + 1] = rn[f + 1]; rn[l + 2] = rn[f + 2];
     }
+    // The two copies of a tile-range ring share one normal.
+    for (let i = 0; i + 1 < rings; i++) {
+      if (!ringBreak[i]) continue;
+      for (let o = i * verts * 3, e = o + verts * 3; o < e; o += 3) {
+        const p = o + verts * 3;
+        const x = rn[o] + rn[p]; const y = rn[o + 1] + rn[p + 1]; const z = rn[o + 2] + rn[p + 2]; const m = Math.hypot(x, y, z) || 1;
+        rn[o] = rn[p] = x / m; rn[o + 1] = rn[p + 1] = y / m; rn[o + 2] = rn[p + 2] = z / m;
+      }
+    }
+    // A tip tube and its parent share the ring where they meet: whichever is built second takes the first's.
+    if (line.parent?.tipChild === line && cutStart <= 0) shareRing(ev, line, 'startRing', line.parent.endRing, 0, rp, rn, verts);
+    if (line.tipChild && cutEnd >= line.length) shareRing(ev, line, 'endRing', line.tipChild.startRing, rings - 1, rp, rn, verts);
 
     const startPlanar = startCap === 'planar';
     const endPlanar = endCap === 'planar';
@@ -691,6 +772,7 @@ export function buildCylinders(ev, buf, job, lines) {
       }
     }
     for (let i = 0; i + 1 < rings; i++) {
+      if (ringBreak[i]) continue;
       for (let v = 0; v < sides; v++) {
         const a = base + i * verts + v; const b = a + verts; const cc = a + 1; const dd = b + 1;
         buf.tri(a, cc, b); buf.tri(cc, dd, b);
@@ -725,5 +807,12 @@ export function buildCylinders(ev, buf, job, lines) {
     };
     if (startPlanar && !j) fan(0, true);
     if (endPlanar) fan(rings - 1, false);
+    rotateUv(buf.uv, base, next, uv.angle); rotateUv(buf.uv1, base, next, uv.angle);
   }
+}
+
+function shareRing(ev, line, key, twin, ring, rp, rn, verts) {
+  const o = ring * verts * 3; const n = verts * 3;
+  if (twin?.ev === ev && twin.p.length === n) { rp.set(twin.p, o); rn.set(twin.n, o); }
+  else line[key] = { ev, p: rp.slice(o, o + n), n: rn.slice(o, o + n) };
 }

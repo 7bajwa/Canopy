@@ -9,11 +9,12 @@ import { writeUsd } from './usd.js';
 import { evaluate } from '../engine/evaluate.js';
 import { zipStore } from './zip.js';
 import { download, safeName, saveDocument } from './io.js';
-import { lineOf, lineExtents, windColors, pivotElements, pivotTextures, pivotUvs, bakeVat, piecesOf, pick, blenderUvs, BLENDER_UVS } from './exportkit.js';
+import { lineOf, lineExtents, windColors, pivotElements, pivotTextures, pivotUvs, bakeVat, piecesOf, pick, blenderUvs, BLENDER_UVS, FORMATS, exportButton, parentsOf } from './exportkit.js';
+import { bakeCards } from './cards.js';
 import { WIND_STRIDE } from '../engine/wind.js';
-import { lifeOf } from '../engine/life.js';
+import { lifeOf, snowAt } from '../engine/life.js';
 
-const opts = { lods: 1, nanite: false, layout: 'custom', format: 'glb', pack: true, group: 'node', ch: ['none', 'none', 'none', 'none'], pivot: false, vat: false, frames: 30, seconds: 2, strength: 5, rig: false, batch: 'separate' };
+const opts = { lodsOn: false, billboard: 'last', nanite: false, layout: 'custom', format: 'glb', pack: true, group: 'node', ch: ['none', 'none', 'none', 'none'], pivot: false, vat: false, frames: 30, seconds: 2, strength: 5, rig: false, batch: 'separate' };
 const GRADIENTS = [['none', 'Keep color'], ['height', 'Height, bottom to top'], ['branch', 'Branch, start to end'], ['leaf', 'Leaf, start to end (flutter)'], ['random', 'Random per piece (phase)'], ['bend', 'Bend, trunk to tips']];
 // Ready-made wind layouts. Each sets the four vertex color channels (and Pivot Painter for Unreal); the matching
 // sample shaders are in the app's wind folder (wind/README.md).
@@ -41,17 +42,19 @@ export function openExport(view, toast, batch = null) {
     body.replaceChildren();
     const sec = (t, on = true) => { const d = el('details', 'set-sec'); d.open = on; d.append(el('summary', '', t)); body.append(d); return d; };
     const f = sec('File');
-    f.append(selectField('Format', opts.format, [['glb', 'GLB (glTF binary)'], ['fbx', 'FBX'], ['usd', 'USD (.usda) for Unreal 5, Omniverse, Houdini'], ['obj', 'OBJ, in a zip'], ['canopy', 'Canopy plant (.canopy)']], (v) => { opts.format = v; draw(); }));
-    if (opts.format !== 'canopy') {
-      f.append(selectField('LODs', String(opts.lods), [['1', 'Just this one'], ['2', 'LOD0 and LOD1'], ['3', 'LOD0 to LOD2'], ['4', 'LOD0 to LOD3']], (v) => { opts.lods = +v; }));
-      f.append(el('p', 'hint', 'Each LOD has fewer tube sides and segments, and fewer, larger leaves; each node\'s LOD reduction % (Mesh tab) sets how much it thins. Files come as name_LOD0, name_LOD1…, in one zip.'));
+    f.append(selectField('Format', opts.format, FORMATS, (v) => { opts.format = v; go.textContent = exportButton(v); draw(); }));
+    const nL = lodCount();
+    if (opts.format !== 'canopy' && opts.format !== 'blender' && nL > 1) {
+      f.append(checkField(`LODs (LOD0 to LOD${nL - 1})`, opts.lodsOn, (v) => { opts.lodsOn = v; draw(); }));
+      if (opts.lodsOn) f.append(selectField('Billboard', opts.billboard, [['none', 'None, all meshes'], ['last', `LOD${nL - 1}, the last`], ...Array.from({ length: nL - 2 }, (_, i) => [String(i + 1), `LOD${i + 1}`])], (v) => { opts.billboard = v; }));
+      f.append(el('p', 'hint', 'Each LOD has fewer tube sides and segments, and fewer, larger leaves; the LOD reduction of each node (Mesh tab) sets how much it thins. The billboard LOD is baked as one picture card, and LODs past it are left out. Files come as name_LOD0, name_LOD1…, in one zip.'));
     }
     if (opts.format === 'usd') {
       f.append(checkField('Nanite assembly (Unreal 5.7+)', opts.nanite, (v) => { opts.nanite = v; }));
-      f.append(el('p', 'hint', 'Repeated pieces become one prototype each, placed by a PointInstancer, and the plant is marked as a Nanite Assembly for Unreal\'s Interchange USD import. Use "Each piece on its own" below, and keep wind gradients off so copies stay identical. See docs/ue5-export.md.'));
+      f.append(el('p', 'hint', 'Repeated pieces become one prototype each, placed by a PointInstancer, and the plant is marked as a Nanite Assembly for the Interchange USD import of Unreal. Use "Each piece on its own" below, and keep wind gradients off so copies stay identical. See docs/ue5-export.md.'));
     }
-    if (opts.format !== 'obj') f.append(checkField('Pack textures inside the file', opts.pack, (v) => { opts.pack = v; }));
-    f.append(el('p', 'hint', opts.format === 'obj' ? 'The OBJ, its MTL and the pictures come in one zip.' : opts.format === 'canopy' ? 'The editable plant, nodes and all. Off: a zip with the .canopy and a textures folder.' : 'Off puts the pictures beside the file, in a zip.'));
+    if (opts.format !== 'blender') f.append(checkField('Pack textures', opts.pack, (v) => { opts.pack = v; draw(); }));
+    f.append(el('p', 'hint', PACK_HINTS[opts.format][opts.format === 'blender' || opts.pack ? 0 : 1]));
     if (opts.format === 'canopy') return;
     if (batch) {
       const b = sec(`Presets (${batch.items.length})`);
@@ -59,7 +62,8 @@ export function openExport(view, toast, batch = null) {
     }
     const g = sec('Objects');
     g.append(selectField('Export as', opts.group, [['single', 'One single mesh'], ['node', 'One mesh per node'], ['instances', 'Each piece on its own, with its transform']], (v) => { opts.group = v; draw(); }));
-    g.append(el('p', 'hint', 'Each piece is a branch, a leaf or a copy, with its pivot at its base and turned the way it grows, so it can be moved in another app.'));
+    g.append(el('p', 'hint', 'Each piece is a branch, a leaf or a copy, with its pivot at its base and turned the way it grows, so it can be moved in another app. Leaves hang from their branch and branches from the trunk.'));
+    if (opts.format === 'blender') return;
     const w = sec('Wind data', false);
     w.append(selectField('Layout', opts.layout, Object.entries(LAYOUTS).map(([k, v]) => [k, v.label]), (v) => {
       opts.layout = v; const L = LAYOUTS[v];
@@ -84,23 +88,23 @@ export function openExport(view, toast, batch = null) {
       if (opts.format === 'glb') w.append(checkField('Bone rig (one bone per branch)', opts.rig, (v) => { opts.rig = v; }));
     }
   };
-  draw();
   const row = el('div', 'row-buttons');
-  const cancel = el('button', 'wide', 'Cancel'); const go = el('button', 'wide primary', 'Export');
+  const cancel = el('button', 'wide', 'Cancel'); const go = el('button', 'wide primary', exportButton(opts.format));
+  draw();
   cancel.addEventListener('click', () => { root.hidden = true; });
-  // Straight into Blender, through the Canopy Bridge add-on listening on this computer.
-  const blender = el('button', 'wide', 'Send to Blender');
-  blender.title = 'Sends an FBX with its textures to Blender. Needs the Canopy Bridge add-on listening there.';
-  blender.addEventListener('click', async () => {
-    blender.disabled = true; blender.textContent = 'Sending…';
-    try { await sendToBlender(view); toast('Sent to Blender.'); root.hidden = true; } catch (e) {
-      console.error(e);
-      toast('Blender didn\'t answer. Install the Canopy Bridge add-on (link below Export), then press Start listening in its Canopy tab.', 8000);
-    }
-    blender.disabled = false; blender.textContent = 'Send to Blender';
-  });
   go.addEventListener('click', async () => {
-    go.disabled = true; go.textContent = 'Exporting…';
+    go.disabled = true;
+    // Straight into Blender, through the Canopy Bridge add-on listening on this computer.
+    if (opts.format === 'blender') {
+      go.textContent = 'Sending…';
+      try { await sendToBlender(view); toast('Sent to Blender.'); root.hidden = true; } catch (e) {
+        console.error(e);
+        toast('Blender did not answer. Install the Canopy Bridge add-on (link below), then press Start listening in its Canopy tab.', 8000);
+      }
+      go.disabled = false; go.textContent = exportButton(opts.format);
+      return;
+    }
+    go.textContent = 'Exporting…';
     try {
       if (!batch) await runExport(view);
       else if (opts.batch === 'separate') await batch.each(batch.items, (p) => runExport(view, `${doc.name} ${p.name}`));
@@ -116,9 +120,9 @@ export function openExport(view, toast, batch = null) {
       }
       root.hidden = true;
     } catch (e) { console.error(e); toast(`The export failed: ${e.message}`, 6000); }
-    go.disabled = false; go.textContent = 'Export';
+    go.disabled = false; go.textContent = exportButton(opts.format);
   });
-  row.append(cancel, blender, go);
+  row.append(cancel, go);
   const addon = el('a', 'hint', 'Get the Blender add-on (Canopy Bridge)');
   addon.href = './blender/canopy_blender.py'; addon.download = 'canopy_blender.py';
   card.append(el('h2', '', 'Export'), body, row, addon);
@@ -128,6 +132,17 @@ export function openExport(view, toast, batch = null) {
 }
 
 // ---- The plant as parts: each with its arrays, material and transform ----
+const PACK_HINTS = {
+  glb: ['Textures inside the GLB.', 'A .gltf with its .bin and a textures folder, in a zip.'],
+  fbx: ['Textures inside the FBX.', 'The FBX with a textures folder beside it, in a zip.'],
+  obj: ['The OBJ, its MTL and the pictures in one zip.', 'The OBJ and its MTL with a textures folder, in one zip.'],
+  usd: ['A .usda cannot hold pictures, so they come beside it, in a zip.', 'The .usda with a textures folder beside it, in a zip.'],
+  canopy: ['The editable plant, nodes and all, textures inside.', 'A zip with the .canopy and a textures folder.'],
+  blender: ['Sends an FBX with its textures packed to Blender. Needs the Canopy Bridge add-on listening there.'],
+};
+// How many LODs the document has (LOD0 up), set by doc.lods.
+const lodCount = () => Math.max(1, Math.min(8, Math.round(+doc.lods || 4)));
+
 const nodeName = (id) => { const n = doc.graph.nodes.find((x) => x.id === id); return safeName(n?.name || n?.type || id); };
 
 function partsOf(view) {
@@ -145,7 +160,7 @@ function partsOf(view) {
   let parts = view.meshes.map((mesh) => {
     const src = mesh.userData.src;
     return {
-      name: nodeName(src.nodeId), src, material: mesh.material, kind: src.kind, leafLines,
+      name: src.exportName || nodeName(src.nodeId), src, material: mesh.material, kind: src.kind, leafLines,
       position: src.position, normal: src.normal, uv: src.uv, color: snowed(src), index: src.index, wind: src.wind,
       quadTri: src.quads ? new Uint8Array(src.index.length / 3).fill(1) : null,
       colorA: tinted ? windColors(src, opts.ch, ctx) : null,
@@ -153,14 +168,17 @@ function partsOf(view) {
       uvNames: forBlender ? BLENDER_UVS : null,
     };
   });
-  if (opts.group === 'instances') parts = parts.flatMap((p) => instancesOf(p, table));
+  if (opts.group === 'instances') {
+    parts = parts.flatMap((p) => instancesOf(p, table));
+    parentsOf(parts.map((p) => p.line), table).forEach((k, i) => { parts[i].parent = k; });
+  }
   if (opts.group === 'single') parts = [merge(parts)];
   return { parts, table, pp };
 }
 
 // Snow (Age & season) goes out in the vertex colors: up-facing points whiten, as in the view.
 function snowed(src) {
-  const L = doc.graph.settings?.life; const k = L?.on ? Math.min(1, Math.max(0, +L.snow || 0)) : 0;
+  const k = snowAt(doc.graph.settings?.life);
   if (!k) return src.color;
   const c = new Float32Array(src.color); const N = src.normal;
   for (let i = 0; i < c.length / 3; i++) {
@@ -187,7 +205,7 @@ function instancesOf(part, table) {
     return {
       ...part, name: `${part.name}_${String(n + 1).padStart(3, '0')}`, position: P, normal: N, uv: pick(part.uv, 2, pc.verts), color: pick(part.color, 3, pc.verts),
       colorA: part.colorA && pick(part.colorA, 4, pc.verts), uvs: part.uvs.map((u) => u && pick(u, 2, pc.verts)), wind: part.wind && pick(part.wind, 3, pc.verts),
-      index: pc.index, translation: base, quaternion: q, quadTri: part.quadTri ? new Uint8Array(pc.index.length / 3).fill(1) : null,
+      index: pc.index, line: pc.line, translation: base, quaternion: q, quadTri: part.quadTri ? new Uint8Array(pc.index.length / 3).fill(1) : null,
     };
   });
 }
@@ -226,12 +244,12 @@ async function pngOf(image) {
 }
 
 // Every picture the materials use, once each, with a file name.
-async function pictures(parts) {
+async function pictures(parts, base = safeName(doc.name)) {
   const files = new Map(); let n = 0;
   for (const p of parts) for (const mat of [p.material].flat()) for (const slot of ['map', 'normalMap', 'alphaMap']) {
     const img = mat?.[slot]?.image;
     if (!img?.width || files.has(img)) continue;
-    files.set(img, { file: `${safeName(doc.name)}_${slot === 'map' ? 'color' : slot === 'normalMap' ? 'normal' : 'opacity'}_${++n}.png`, bytes: await pngOf(img) });
+    files.set(img, { file: `${base}_${slot === 'map' ? 'color' : slot === 'normalMap' ? 'normal' : 'opacity'}_${++n}.png`, bytes: await pngOf(img) });
   }
   return files;
 }
@@ -291,7 +309,7 @@ async function sendToBlender(view) {
 
 // The plant rebuilt at a lower level of detail, in the shape partsOf reads from the view.
 function lodView(view, lod) {
-  const res = evaluate(doc.graph, { lod });
+  const res = evaluate(doc.graph, { lod, lods: lodCount() });
   return {
     meshes: res.meshes.map((m) => ({ userData: { src: m }, material: view.material(m, false, { blend: !!m.uv1, wind: !!m.wind }) })),
     windLines: res.windLines, u: view.u, gust: view.gust,
@@ -300,9 +318,16 @@ function lodView(view, lod) {
 
 async function runExport(view, title = doc.name) {
   if (opts.format === 'canopy') { saveDocument(opts.pack ? 'embed' : 'folder'); return; }
-  if (opts.lods > 1 && view.material) {
-    const all = [];
-    for (let n = 0; n < opts.lods; n++) all.push(...await exportFiles(n ? lodView(view, n) : view, `${title}_LOD${n}`));
+  const nL = lodCount();
+  if (opts.lodsOn && nL > 1 && view.material) {
+    const bb = opts.billboard === 'none' ? -1 : opts.billboard === 'last' ? nL - 1 : Math.min(nL - 1, +opts.billboard);
+    const all = []; const seen = new Set();
+    for (let n = 0; n < nL; n++) {
+      const files = n === bb ? await billboardFiles(view, `${title}_LOD${n}`) : await exportFiles(n ? lodView(view, n) : view, `${title}_LOD${n}`);
+      // LODs share their pictures: each file goes in once.
+      for (const f of files) if (!seen.has(f.name)) { seen.add(f.name); all.push(f); }
+      if (n === bb) break;
+    }
     download(`${safeName(title)}_LODs.zip`, new Blob([zipStore(all)], { type: 'application/zip' }));
     return;
   }
@@ -311,8 +336,22 @@ async function runExport(view, title = doc.name) {
   else download(`${safeName(title)}.zip`, new Blob([zipStore(files)], { type: 'application/zip' }));
 }
 
-// The files one export makes, the main one first.
-async function exportFiles(view, title) {
+// The billboard LOD: the plant in the view baked onto one card (DirectX normals), written like any other mesh.
+async function billboardFiles(view, title) {
+  const r = await bakeCards(view, { kind: 'billboard', size: 1024, normals: 'dx' });
+  const map = new THREE.CanvasTexture(r.diffuse); map.colorSpace = THREE.SRGBColorSpace;
+  const normalMap = new THREE.CanvasTexture(r.normal);
+  const material = new THREE.MeshStandardMaterial({ name: `${safeName(title)}_billboard`, map, normalMap, alphaMap: map, alphaTest: 0.5, side: THREE.DoubleSide });
+  const src = { ...r.mesh, color: new Float32Array(r.mesh.position.length).fill(1), kind: 'card', exportName: 'Billboard' };
+  const keep = { ...opts };
+  Object.assign(opts, { group: 'node', ch: ['none', 'none', 'none', 'none'], pivot: false, vat: false, rig: false, layout: 'custom' });
+  try { return await exportFiles({ meshes: [{ userData: { src }, material }], windLines: new Float32Array(0), u: view.u, gust: view.gust }, title, `${safeName(title)}_billboard`); } finally {
+    Object.assign(opts, keep); map.dispose(); normalMap.dispose(); material.dispose();
+  }
+}
+
+// The files one export makes, the main one first. Unpacked pictures go in a textures folder.
+async function exportFiles(view, title, picBase) {
   const { parts, table, pp } = partsOf(view);
   const name = safeName(title);
   const extra = [];
@@ -331,16 +370,18 @@ async function exportFiles(view, title) {
     }
     extra.push({ name: `${name}_VAT.json`, data: JSON.stringify(info, null, 2) });
   }
-  const pics = await pictures(parts);
+  const pics = await pictures(parts, picBase);
   const packed = opts.pack && opts.format !== 'obj';
+  if (!opts.pack) for (const f of pics.values()) f.file = `textures/${f.file}`;
   let main;
+  if (opts.format === 'glb' && !packed) return [...await gltf(parts, table, name), ...extra];
   if (opts.format === 'glb') main = { name: `${name}.glb`, data: await glb(parts, packed, table) };
   else if (opts.format === 'fbx') main = { name: `${name}.fbx`, data: fbx(parts, pics, packed) };
   else if (opts.format === 'usd') {
     const { usda, files } = usd(parts, pics, name);
     return [{ name: `${name}.usda`, data: usda }, ...files.map((x) => ({ name: x.file, data: x.bytes })), ...extra];
   }
-  else main = { name: `${name}.obj`, data: obj(parts, pics) };
+  else main = { name: `${name}.obj`, data: obj(parts, pics, name) };
   const files = [main, ...extra];
   if (opts.format === 'obj') files.push({ name: `${name}.mtl`, data: mtl(parts, pics) });
   if (!packed) for (const f of pics.values()) files.push({ name: f.file, data: f.bytes });
@@ -367,6 +408,21 @@ const rgbOf = (m) => (m?.color ? [m.color.r, m.color.g, m.color.b] : [1, 1, 1]);
 
 async function glb(parts, packed, table) {
   const { GLTFExporter } = await import('three/examples/jsm/exporters/GLTFExporter.js');
+  return new GLTFExporter().parseAsync(sceneOf(parts, packed, table), { binary: true });
+}
+
+// glTF as text: the .gltf, its buffer as a .bin, and its pictures in a textures folder.
+async function gltf(parts, table, name) {
+  const { GLTFExporter } = await import('three/examples/jsm/exporters/GLTFExporter.js');
+  const json = await new GLTFExporter().parseAsync(sceneOf(parts, true, table), { binary: false });
+  const bytes = (uri) => Uint8Array.from(atob(uri.slice(uri.indexOf(',') + 1)), (c) => c.charCodeAt(0));
+  const files = [];
+  (json.buffers || []).forEach((b, i) => { if (!b.uri?.startsWith('data:')) return; const f = `${name}${i ? `_${i}` : ''}.bin`; files.push({ name: f, data: bytes(b.uri) }); b.uri = f; });
+  (json.images || []).forEach((im, i) => { if (!im.uri?.startsWith('data:')) return; const f = `textures/${name}_${i + 1}.${im.mimeType === 'image/jpeg' ? 'jpg' : 'png'}`; files.push({ name: f, data: bytes(im.uri) }); im.uri = f; });
+  return [{ name: `${name}.gltf`, data: JSON.stringify(json) }, ...files];
+}
+
+function sceneOf(parts, packed, table) {
   const scene = new THREE.Scene(); const top = new THREE.Group(); top.name = doc.name;
   // glTF measures in meters and the editor in centimeters.
   top.scale.setScalar(0.01); scene.add(top);
@@ -374,6 +430,7 @@ async function glb(parts, packed, table) {
     name: m.name, color: m.color, roughness: m.roughness ?? 1, metalness: m.metalness ?? 0, vertexColors: true, side: m.side, alphaTest: m.alphaTest,
     map: packed ? m.map : null, normalMap: packed ? m.normalMap : null,
   });
+  const meshes = [];
   for (const p of parts) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(p.position, 3));
@@ -390,9 +447,11 @@ async function glb(parts, packed, table) {
     mesh.name = p.name;
     if (p.translation) mesh.position.copy(p.translation);
     if (p.quaternion) mesh.quaternion.copy(p.quaternion);
-    top.add(mesh);
+    top.add(mesh); meshes.push(mesh);
   }
-  return new GLTFExporter().parseAsync(scene, { binary: true });
+  // Pieces hang from their parent piece, keeping where they stand, so outliners show the hierarchy.
+  parts.forEach((p, i) => { if (p.parent >= 0) meshes[p.parent].attach(meshes[i]); });
+  return scene;
 }
 
 // shortcut: one bone per branch line, each point following its own line fully (leaves follow the branch they grow
@@ -426,7 +485,14 @@ function fbx(parts, pics, packed) {
   const e = new THREE.Euler();
   return writeFbx(parts.map((p) => {
     const mats = [p.material].flat();
+    // A piece under a parent is placed in the parent's space.
+    const up = parts[p.parent];
+    if (up?.quaternion) {
+      const inv = up.quaternion.clone().invert();
+      p = { ...p, quaternion: inv.clone().multiply(p.quaternion), translation: p.translation.clone().sub(up.translation).applyQuaternion(inv) };
+    }
     return {
+      parent: up ? p.parent : -1,
       name: p.name, position: p.position, normal: p.normal, uv: p.uv, color: p.color, colorA: p.colorA, index: p.index, quadTri: p.quadTri,
       uvs: p.uvs.filter(Boolean), uvNames: p.uvNames, rgb: rgbOf(mats[0]), polyMat: p.polyMat,
       translation: p.translation && [p.translation.x, p.translation.y, p.translation.z],
@@ -442,8 +508,8 @@ function fbx(parts, pics, packed) {
 }
 
 // OBJ has no transforms, so pieces are written where they stand.
-function obj(parts, pics) {
-  const out = [`# ${doc.name}\nmtllib ${safeName(doc.name)}.mtl\n`]; let base = 1;
+function obj(parts, pics, name) {
+  const out = [`# ${doc.name}\nmtllib ${name}.mtl\n`]; let base = 1;
   const v = new THREE.Vector3();
   for (const p of parts) {
     const n = p.position.length / 3; const mats = [p.material].flat();

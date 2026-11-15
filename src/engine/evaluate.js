@@ -1,7 +1,7 @@
 // Turns a node graph into meshes: walks distributors and paths, then builds geometry.
 import { NODE_TYPES, socketsOf } from '../graph/schema.js';
 import { hash, hashString, clamp, DEG, bakeCurve, sampleCurve, dot, norm, sub } from './math.js';
-import { finishLine, ensureFrames, pointAt, tOf } from './line.js';
+import { finishLine, ensureFrames, pointAt, tOf, sampleLine, newSample } from './line.js';
 import { makeShape, shapeSize } from './shapes.js';
 import { MODIFIERS } from './modifiers.js';
 import { makeSpawns, drawnLines } from './distribute.js';
@@ -12,7 +12,7 @@ import { buildLeaves, buildStandardLeaves, buildInstances } from './leaves.js';
 import { buildMeta } from './meta.js';
 import { inlineModifiers } from './builtins.js';
 import { expandGraph, ownerOf } from './expand.js';
-import { applyMeshMods, avoidMesh } from './meshmods.js';
+import { applyMeshMods, avoidMesh, projectOnto, lodShare } from './meshmods.js';
 import { applyMods, computeNormals } from './primitive.js';
 import { windTable } from './wind.js';
 import { bakeOcclusion } from './ao.js';
@@ -29,12 +29,13 @@ export const mixValue = (op, a, b, t) => { const r = (MIX_OPS[op] || MIX_OPS.add
 
 export class Evaluator {
   constructor(source, opts = {}) {
-    const graph = expandGraph(source);
+    const graph = expandGraph(source, opts);
     this.graph = graph;
     this.images = opts.images || null;
     this.draft = !!opts.draft;
     // Level of detail for exports: 0 full, each level up thins tubes and leaves (see lodKeep).
-    this.lod = Math.max(0, Math.min(3, Math.round(+opts.lod || 0)));
+    this.lods = Math.max(1, Math.min(8, Math.round(+opts.lods || 4)));
+    this.lod = Math.max(0, Math.min(this.lods - 1, Math.round(+opts.lod || 0)));
     this.camera = opts.camera || [0, 0, 500];
     const s = graph.settings || {};
     this.seed = s.seed ?? 1;
@@ -329,10 +330,19 @@ export class Evaluator {
   // A line's number comes from its node, its parent line and its place among that parent's children, so adding
   // an unrelated node (an imported mesh, a new branch) doesn't reshuffle every other line's randomness.
   // The share of detail a node keeps at this LOD: 1 at LOD 0, then 0.6, 0.36 and 0.22, softened by its LOD reduction %.
-  lodKeep(node) {
+  // A node with an LOD modifier (expand.js hands its settings to the path as lodMod) follows that instead.
+  lodKeep(node, what = null) {
     if (!this.lod) return 1;
+    if (node.params.lodMod) return lodShare(node.params.lodMod, this.lod, this.lods, what);
     const k = Math.max(0, Math.min(100, +(node.params.lodReduce ?? 100))) / 100;
     return 1 - (1 - 0.6 ** this.lod) * k;
+  }
+
+  // Whether cutout leaves turn into plain cards at this LOD.
+  lodCards(node) {
+    const P = node.params.lodMod;
+    if (P) return P.leaves !== false && this.lod >= Math.max(1, +(P.cardFrom ?? 2));
+    return this.lod >= 2 && (+(node.params.lodReduce ?? 100)) > 0;
   }
 
   lineIdFor(node, parent) {
@@ -351,7 +361,7 @@ export class Evaluator {
       id, node, pts, nominal, tOff: 0,
       parent: spawn.parent || null, parentS: spawn.s || 0, level: spawn.level || 0, pos: spawn.pos || 0,
       angleDiv: spawn.angleDiv || 0, angleBend: spawn.angleBend || 0, offset: spawn.offset || 0,
-      distance: spawn.distance || 0, surfaceLevel: spawn.surfaceLevel || 0,
+      distance: spawn.distance || 0, surfaceLevel: spawn.surfaceLevel || 0, surfaceN: spawn.surfN || null,
       attach: null, roll: null, startDir: spawn.d, upHint: spawn.up || null, lastLevel: true,
       rootDist: spawn.parent ? spawn.parent.rootDist + (spawn.s || 0) : 0,
       chainPos: spawn.parent ? (spawn.parent.rootDist + (spawn.s || 0)) / Math.max(1e-3, spawn.parent.rootDist + spawn.parent.length) : 0,
@@ -394,10 +404,11 @@ export class Evaluator {
         p0 = [sp.p[0] - sp.d[0] * sink, sp.p[1] - sp.d[1] * sink, sp.p[2] - sp.d[2] * sink];
         L += sink;
       }
+      if (node.params.onSurface) p0 = onParentSurface(sp, p0);
       const pts = [p0[0], p0[1], p0[2]];
       let s = 0;
       const minStep = L / this.segLimit;
-      const lodStep = this.lod ? 1 / this.lodKeep(node) : 1;
+      const lodStep = this.lod ? 1 / this.lodKeep(node, 'segments') : 1;
       // Absolute segments: the same number on every line, whatever its length.
       const fixedStep = node.params.segMode === 'absolute' ? L / clamp(Math.round(+node.params.segCount || 1), 1, this.segLimit) : 0;
       while (s < L - 1e-4) {
@@ -412,7 +423,7 @@ export class Evaluator {
       if (line.dead) continue;
       // Lower LODs: fewer leaves, each larger, so the crown keeps its look.
       if (this.lod && line.node.params.leafy) {
-        const keep = this.lodKeep(node);
+        const keep = this.lodKeep(node, 'leaves');
         if (hash(seed, nextId, 931) > keep) continue;
         line.sizeScale = (line.sizeScale ?? 1) / Math.sqrt(keep);
       }
@@ -476,6 +487,12 @@ export class Evaluator {
     if (!job) { job = { node: b, lines: [], comps: compsOf(this, b) }; this.jobs.set(b.id, job); }
     for (const l of lines) { job.lines.push(l); l.colorFn ||= job.comps.color; }
     if (b.type === 'CylinderMesh' || b.type === 'MetaMesh') computeRadii(this, job, lines);
+    // Blending into the floor or a Mesh: the foot stands square on that surface over the blend height.
+    const fb = b.type === 'CylinderMesh' && b.params.owned && b.params.blend ? job.comps.blend?.params : null;
+    if (fb) {
+      const moved = lines.filter((l) => l.node.type === 'Path' && (!l.parent || l.surfaceN) && !l.isTip && l.radii && standOn(l, l.surfaceN || [0, 1, 0], Math.max(0.1, +fb.length || 1.6) * l.radii[0]));
+      if (moved.length) computeRadii(this, job, moved);
+    }
     for (const l of lines) {
       const box = this.lineBox(l);
       this.grow(b.id, box);
@@ -628,7 +645,7 @@ export class Evaluator {
     const meshes = [];
     const aoJobs = [];
     const cropJobs = [];
-    const avoidJobs = [];
+    const avoidJobs = []; const projectJobs = [];
     let tris = 0; let verts = 0;
     const metaGroups = new Map();
     for (const job of this.jobs.values()) {
@@ -650,7 +667,7 @@ export class Evaluator {
         applyMeshMods(m, b.params.meshMods, this.images, this.treeCenter);
         if (b.params.vcAO) aoJobs.push([m, +b.params.vcAOStrength || 0.7]);
         if (b.params.cropUnder) cropJobs.push(m);
-        for (const mod of b.params.meshMods || []) if (mod.on !== false && mod.type === 'avoid') avoidJobs.push([m, mod.params || {}]);
+        for (const mod of b.params.meshMods || []) { if (mod.on !== false && mod.type === 'avoid') avoidJobs.push([m, mod.params || {}]); if (mod.on !== false && mod.type === 'project') projectJobs.push([m, mod.params || {}]); }
         m.nodeId = ownerOf(m.nodeId);
         meshes.push(m); tris += m.index.length / 3; verts += m.position.length / 3;
       }
@@ -675,6 +692,8 @@ export class Evaluator {
       }
     }
     // Avoiding intersections needs every mesh in place, and comes before occlusion, which depends on where they ended up.
+    // Projecting onto a target needs that target built, and comes before avoiding.
+    for (const [m, P] of projectJobs) projectOnto(m, meshes, P);
     for (const [m, P] of avoidJobs) {
       const before = m.index.length;
       avoidMesh(m, meshes, P);
@@ -766,6 +785,42 @@ export function evaluate(graph, opts) {
   return new Evaluator(graph, opts).run();
 }
 
+// Start on the parent's bark instead of its center line: out from the axis, the way the line leans, by the parent's thickness there.
+const PS = newSample();
+export function onParentSurface(sp, p0) {
+  const par = sp.parent;
+  if (!par?.radii || sp.tip || (sp.s || 0) >= par.length - 1e-3) return p0;
+  sampleLine(par, sp.s || 0, PS);
+  const T = [PS.tx, PS.ty, PS.tz];
+  const v = sp.out || sp.d;
+  const k = dot(v, T);
+  const o = [v[0] - T[0] * k, v[1] - T[1] * k, v[2] - T[2] * k];
+  const l = Math.hypot(o[0], o[1], o[2]);
+  if (l < 1e-3) return p0;
+  const r = PS.r / l;
+  return [p0[0] + o[0] * r, p0[1] + o[1] * r, p0[2] + o[2] * r];
+}
+
+// Bends a line's first H toward the surface normal n at its start, fading out smoothly, so its foot meets the surface square.
+function standOn(line, n, H) {
+  H = Math.min(H, line.length * 0.9);
+  if (!(H > 1e-3)) return false;
+  const square = (s) => { sampleLine(line, s, PS); return PS.tx * n[0] + PS.ty * n[1] + PS.tz * n[2] > 0.9999; };
+  if (square(0) && square(H)) return false;
+  // Segments are often longer than the blend, so the foot gets points of its own first.
+  const K = 4;
+  const P = [line.pts[0], line.pts[1], line.pts[2]];
+  for (let k = 1; k <= K; k++) { sampleLine(line, (H * k) / K, PS); P.push(PS.px, PS.py, PS.pz); }
+  for (let i = 1; i < line.n; i++) if (line.len[i] > H + 1e-3) P.push(line.pts[i * 3], line.pts[i * 3 + 1], line.pts[i * 3 + 2]);
+  for (let k = 1; k < K; k++) {
+    const s = (H * k) / K; const f = 1 - k / K; const w = f * f * (3 - 2 * f);
+    for (let j = 0; j < 3; j++) P[k * 3 + j] += (P[j] + n[j] * s - P[k * 3 + j]) * w;
+  }
+  line.pts = new Float32Array(P);
+  finishLine(line);
+  return true;
+}
+
 // All typed arrays in a result, so the worker can hand them over without copying.
 export function transferables(res) {
   const list = [];
@@ -813,7 +868,8 @@ export function cropAround(m, holes) {
 export function continueTips(lines) {
   for (const l of lines) {
     const p = l.parent;
-    if (!l.isTip || !p?.radii || !l.radii || l.n < 3 || p.tipChild) continue;
+    // A hidden tip tube draws nothing, so the parent keeps its cap.
+    if (!l.isTip || !p?.radii || !l.radii || l.n < 3 || p.tipChild || l.node.params.visible === false) continue;
     p.tipChild = l;
     p.capEnd = 'none'; l.capStart = 'none';
     const Rend = p.radii[p.radii.length - 1];

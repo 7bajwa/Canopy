@@ -3,6 +3,7 @@
 import { NODE_TYPES, defaultParams, hasTabs } from '../graph/schema.js';
 import { bakeShape } from './primitive.js';
 import { DEG, shapeXf } from './math.js';
+import { lodModOf, lodShare } from './meshmods.js';
 import { MATERIAL_FIELDS, NO_MATERIAL, materialOf } from '../graph/materials.js';
 
 const makeNode = (id, type, on, params) => ({ id, type, on, params: { ...defaultParams(type), ...params } });
@@ -52,7 +53,12 @@ function chainMods(n, pathId, nodes, links) {
   }
 }
 
-const objectIdOf = (id, nodes) => (nodes.some((x) => x.id === `${id}#obj`) ? `${id}#obj` : id);
+const objectIdOf = (id, nodes) => (nodes.some((x) => x.id === `${id}#hit`) ? `${id}#hit` : nodes.some((x) => x.id === `${id}#obj`) ? `${id}#obj` : id);
+// v turned by the unit quaternion q = [x, y, z, w].
+const rotQ = (v, [x, y, z, w]) => {
+  const tx = 2 * (y * v[2] - z * v[1]); const ty = 2 * (z * v[0] - x * v[2]); const tz = 2 * (x * v[1] - y * v[0]);
+  return [v[0] + w * tx + y * tz - z * ty, v[1] + w * ty + z * tx - x * tz, v[2] + w * tz + x * ty - y * tx];
+};
 
 // The node's scene material, or its own settings in a file from before materials, or plain gray.
 function lookOf(graph, n) {
@@ -115,7 +121,11 @@ function meshBuilder(graph, n, parts, nodes, links, pathId) {
         // The material carries the cutouts; the node can use some of them.
         const all = look.cutouts?.length ? look.cutouts : n.params.cutouts || [];
         const pick = n.params.cutoutPick;
-        const cutouts = Array.isArray(pick) ? all.filter((c, i) => pick.includes(c.id ?? i)) : all;
+        const picked = Array.isArray(pick) ? all.filter((c, i) => pick.includes(c.id ?? i)) : all;
+        // The node's own order (Use cutouts); cutouts it does not list keep the material's order after them.
+        const order = Array.isArray(n.params.cutoutOrder) ? n.params.cutoutOrder : [];
+        const rank = (c) => { const r = order.indexOf(c.id); return r < 0 ? order.length + all.indexOf(c) : r; };
+        const cutouts = order.length ? [...picked].sort((a, b) => rank(a) - rank(b)) : picked;
         nodes.push(makeNode(cutId, 'LeafCutout', n.on, { ...parts.cut, cutouts, none: Array.isArray(pick) && !pick.length, atlas: look.texture ?? n.params.atlas ?? null }));
         links.push({ id: `${cutId}:out`, from: cutId, fromSock: 'out', to: id, toSock: 'shape' });
       } else if (common.leafType === 'card' && common.curves) {
@@ -140,7 +150,7 @@ function expandSpline(graph, n, parentKind, nodes, links) {
   } else {
     nodes.push(placementNode(n, parts, parentKind));
     // Growth: the line grows itself into a whole branching tree from each start point (engine/growth.js).
-    nodes.push(makeNode(pathId, n.params.growOn ? 'GrowthPath' : 'Path', n.on, { ...parts.path, visible: true }));
+    nodes.push(makeNode(pathId, n.type === 'Growth' || n.params.growOn ? 'GrowthPath' : 'Path', n.on, { ...parts.path, visible: true, lodMod: lodModOf(n.params.meshMods) }));
     links.push({ id: `${pathId}:in`, from: placeId, fromSock: 'out', to: pathId, toSock: 'in' });
   }
   chainMods(n, pathId, nodes, links);
@@ -148,7 +158,7 @@ function expandSpline(graph, n, parentKind, nodes, links) {
 }
 
 // A mesh is placed as copies along short hidden lines; its baked shape also serves as a surface to grow on.
-function expandMesh(graph, n, parentKind, nodes, links) {
+function expandMesh(graph, n, parentKind, nodes, links, opts = {}) {
   const parts = split(n);
   const placeId = `${n.id}#place`; const pathId = `${n.id}#path`; const buildId = `${n.id}#mesh`; const elId = `${n.id}#el`;
   nodes.push(placementNode(n, parts, parentKind, { identity: true }));
@@ -163,9 +173,20 @@ function expandMesh(graph, n, parentKind, nodes, links) {
   const surface = bakeShape({ ...P0, mods: local, pos, rot: [0, 0, 0], scl: [1, 1, 1], xf });
   // copyFrom lets children find the same spot on every copy: the surface is the first copy, baked where it stands.
   nodes.push(makeNode(`${n.id}#obj`, 'SceneObject', n.on, { shape: 'imported', obj: surface, pos: [0, 0, 0], size: [100, 100, 100], display: false, copyFrom: { pos, sclU: u } }));
+  // The first copy moved with the gizmo (a per-copy edit): modifiers that react to the mesh get it where it now stands.
+  const ov = P0.inst?.[1];
+  if (ov && (ov.t || ov.q || ov.s)) {
+    const s = ov.s || [1, 1, 1];
+    let hx = shapeXf([+P0.rotX || 0, +P0.rotY || 0, +P0.rotZ || 0].map((a) => a * DEG), [(P0.sclX ?? 1) * u * s[0], (P0.sclY ?? 1) * u * s[1], (P0.sclZ ?? 1) * u * s[2]]) || { r: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], k: [1, 1, 1] };
+    if (ov.q) hx = { ...hx, r: hx.r.map((e) => rotQ(e, ov.q)) };
+    const hp = pos.map((v, i) => v + (+ov.t?.[i] || 0));
+    nodes.push(makeNode(`${n.id}#hit`, 'SceneObject', n.on, { shape: 'imported', obj: bakeShape({ ...P0, mods: local, pos: hp, rot: [0, 0, 0], scl: [1, 1, 1], xf: hx }), pos: [0, 0, 0], size: [100, 100, 100], display: false }));
+  }
   if (n.params.show === false) return;
   // Each copy gets its own transform from the Placement, so the shape it copies is baked without one.
-  const obj = bakeShape({ ...n.params, mods: local, pos: [0, 0, 0], rot: [0, 0, 0], scl: [1, 1, 1] });
+  // An LOD modifier thins the drawn copies only; the surface children grow on stays the same in every LOD.
+  const keep = lodShare(lodModOf(P0.mods), opts.lod || 0, opts.lods || 4, 'segments');
+  const obj = bakeShape({ ...n.params, mods: local, pos: [0, 0, 0], rot: [0, 0, 0], scl: [1, 1, 1], ...(keep < 1 ? { segments: Math.max(3, Math.round((+n.params.segments || 16) * keep)) } : {}) });
   const globalMods = (P0.mods || []).filter((m) => m.on !== false && m.params?.space === 'all together');
   nodes.push(makeNode(buildId, 'InstancedGeometry', n.on, { ...surfaceOf(graph, n, parts, 'tube').m, position: 0, scale: 100, randomScale: 0, owned: true, globalMods, cropUnder: !!P0.cropUnder }));
   nodes.push(makeNode(elId, 'InstancedElement', n.on, { shape: 'imported', obj, size: 100, color: '#ffffff', rate: 100 }));
@@ -175,7 +196,30 @@ function expandMesh(graph, n, parentKind, nodes, links) {
   );
 }
 
-export function expandGraph(graph) {
+// A muted node makes nothing, but its children still grow: from its own parents instead, as a bypass.
+export function bypassMuted(graph) {
+  const muted = new Set(graph.nodes.filter((n) => n.mute === true).map((n) => n.id));
+  if (!muted.size) return graph;
+  const parentsOf = (id, trail) => (trail.has(id) ? [] : graph.links.filter((l) => l.to === id && l.toSock === 'parent')
+    .flatMap((l) => (muted.has(l.from) ? parentsOf(l.from, new Set([...trail, id])) : [l])));
+  const links = [];
+  for (const l of graph.links) {
+    if (muted.has(l.to)) continue;
+    if (!muted.has(l.from)) { links.push(l); continue; }
+    if (l.toSock !== 'parent') continue;
+    for (const p of parentsOf(l.from, new Set())) {
+      const dup = (x) => x.from === p.from && x.to === l.to && x.toSock === 'parent';
+      if (!links.some(dup) && !graph.links.some(dup)) links.push({ ...l, id: `${l.id}~${p.id}`, from: p.from, fromSock: p.fromSock });
+    }
+  }
+  return { ...graph, nodes: graph.nodes.filter((n) => !muted.has(n.id)), links };
+}
+
+// Nodes whose children grow along their lines: a Spline, and a Growth tree's branches.
+const linesOf = (type) => type === 'Spline' || type === 'Growth';
+
+export function expandGraph(graph, opts = {}) {
+  graph = bypassMuted(graph);
   if (!graph.nodes.some((n) => hasTabs(n.type))) return graph;
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const nodes = graph.nodes.filter((n) => !hasTabs(n.type));
@@ -184,12 +228,12 @@ export function expandGraph(graph) {
   for (const l of graph.links) {
     const to = byId.get(l.to); const from = byId.get(l.from);
     if (!to || !from || l.toSock !== 'parent' || !hasTabs(to.type)) continue;
-    kindOfParent.set(to.id, from.type === 'Spline' ? 'spline' : 'mesh');
+    kindOfParent.set(to.id, linesOf(from.type) ? 'spline' : 'mesh');
   }
   // Meshes first, so anything that names one as an object finds its baked surface.
   const unified = graph.nodes.filter((n) => hasTabs(n.type)).sort((a, b) => (a.type === 'Mesh' ? 0 : 1) - (b.type === 'Mesh' ? 0 : 1));
   for (const n of unified) {
-    if (n.type === 'Mesh') expandMesh(graph, n, kindOfParent.get(n.id), nodes, links);
+    if (n.type === 'Mesh') expandMesh(graph, n, kindOfParent.get(n.id), nodes, links, opts);
     else expandSpline(graph, n, kindOfParent.get(n.id), nodes, links);
   }
   for (let l of graph.links) {
@@ -208,7 +252,7 @@ export function expandGraph(graph) {
       continue;
     }
     if (l.toSock === 'parent') {
-      if (to.params.strokes?.length) { if (from.type === 'Spline') links.push({ ...l, from: `${from.id}#path`, fromSock: 'children', to: `${to.id}#path`, toSock: 'parent' }); } else if (from.type === 'Spline') links.push({ ...l, from: `${from.id}#path`, fromSock: 'children', to: `${to.id}#place`, toSock: 'parent' });
+      if (to.params.strokes?.length) { if (linesOf(from.type)) links.push({ ...l, from: `${from.id}#path`, fromSock: 'children', to: `${to.id}#path`, toSock: 'parent' }); } else if (linesOf(from.type)) links.push({ ...l, from: `${from.id}#path`, fromSock: 'children', to: `${to.id}#place`, toSock: 'parent' });
       else if (from.type === 'Mesh') {
         // The surface to grow on, and the copies themselves, so children spread over every copy and ride it in the wind.
         links.push({ ...l, from: `${from.id}#obj`, fromSock: 'out', to: `${to.id}#place`, toSock: 'object' });

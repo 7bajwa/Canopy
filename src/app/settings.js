@@ -17,7 +17,7 @@ const ICON = {
 };
 const TABS = [['view', 'View'], ['nav', 'Navigation'], ['bar', 'Toolbar'], ['render', 'Render'], ['wind', 'Wind'], ['scale', 'Scale and ground'], ['system', 'System'], ['dev', 'Developer']];
 let tab = 'view';
-const open = new Set(['Updates', 'Theme', 'Layout', 'Toolbar groups', 'Picture', 'Gusts', 'Scale indicator', 'Ground', 'Backups', 'AI control']);
+const open = new Set(['Updates', 'Theme', 'Layout', 'Turning the 3D view', 'Toolbar groups', 'Picture', 'Gusts', 'Scale indicator', 'Ground', 'Backups', 'AI control']);
 
 export function openSettings(root, prefs, setPref) {
   const body = root.querySelector('.settings-body');
@@ -118,7 +118,7 @@ export function openSettings(root, prefs, setPref) {
     num('Environment light', 'envLight', { min: 0, max: 2 });
     check('Shadows', 'shadows');
     check('Soft glow behind the plant', 'glow');
-    head('Wireframe');
+    head('Wiremesh');
     color('Line color', 'wireColor');
     num('Line strength', 'wireOpacity', { min: 0.05, max: 1 });
     head('Behind the plant');
@@ -140,6 +140,10 @@ export function openSettings(root, prefs, setPref) {
     const reset = el('button', 'wide', 'Put the bars back');
     reset.addEventListener('click', () => { for (const k of ['navY2d', 'navY3d', 'navWall2d', 'navWall3d']) setPref(k, null); setPref('barAt', 'top'); });
     add(reset);
+    head('Turning the 3D view');
+    note('Local turns and zooms about a point straight ahead, as far away as the middle of the plant, so the plant stays in view after panning and zooming in. World origin turns about the upright line through the origin.');
+    head('Entity editor');
+    pick('A box picks', 'xfBox', [['touch', 'What it touches'], ['cover', 'Only what it fully covers']]);
   } else if (tab === 'bar') {
     head('Toolbar groups');
     note('Each row is one group. First: fold it into one button that opens its list. Then: hide the whole group. Then each button: lit shows it on the toolbar.');

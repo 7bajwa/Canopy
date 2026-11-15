@@ -1,5 +1,5 @@
 // The Placement tab: where each line starts, which way it leaves, and how big it is.
-import { hash, DEG, cross, norm, rotate, perpendicular, add, mul, clamp, mix3, dot, bakeCurve, sampleCurve, ZUP, turnXYZ, shapeXf } from './math.js';
+import { hash, DEG, cross, norm, rotate, perpendicular, add, mul, clamp, mix3, dot, sub, bakeCurve, sampleCurve, ZUP, turnXYZ, shapeXf } from './math.js';
 import { sampleLine, newSample, tOf } from './line.js';
 import { softNoise, bakeShape } from './primitive.js';
 import { makeShape } from './shapes.js';
@@ -21,7 +21,7 @@ function emitter(ev, dn, q, out) {
   const inst = dn.params.inst || null;
   // `mirror` is the second side of a pair (or every other one): its turns run the other way, so pairs open
   // and close like wings, and its transform is reflected across the plane through the parent line.
-  return function emit({ p, axis, radial, t, key, line = null, s = 0, tilt = null, sizeK = 1, mirror = false, spinAdd = 0, rollAdd = 0, tip = false }) {
+  return function emit({ p, axis, radial, t, key, line = null, s = 0, tilt = null, sizeK = 1, mirror = false, spinAdd = 0, rollAdd = 0, tip = false, n = null }) {
     c.line = line; c.lineId = key; c.t = t; c.pos = t; c.level = line ? line.level + 1 : 0; c.chainPos = t;
     const rnd = (salt) => hash(seed, key, salt);
     const sgn = mirror ? -1 : 1;
@@ -68,6 +68,8 @@ function emitter(ev, dn, q, out) {
       // Deleted in the entity editor: it keeps its place in the count, so the others stay as they are.
       hide: !!ov?.hide || (line?.youngFrom > 0 && t < line.youngFrom),
       tip,
+      // Which way it first leans out from the parent, and the normal of the surface it stands on (Mesh parents).
+      out: M(r0), surfN: n ? M(norm(n)) : null,
     });
   };
 }
@@ -171,7 +173,8 @@ function splineMode(ev, dn, q, parents, emit, seed) {
   const curved = q.density.linked;
   const baseDensity = +P.density || 1;
   for (const line of parents) {
-    const L = line.length;
+    // A trimmed line keeps its children where they were on the whole line; those beyond the cut are gone.
+    const L = line.cut ? Math.max(line.length, (line.nominal || 0) - (line.tOff || 0)) : line.length;
     if (L <= 0) continue;
     const key0 = (line.id * 4099) | 0;
     c.line = line; c.t = 0; c.pos = 0; c.lineId = key0; c.level = line.level + 1;
@@ -194,6 +197,7 @@ function splineMode(ev, dn, q, parents, emit, seed) {
       else nodes.push([s, phi0 + i * turn]);
     }
     nodes.forEach(([s, a, mirror], i) => {
+      if (s > line.length + 1e-4) return;
       const t = tOf(line, s);
       const key = (key0 + i * 31) | 0;
       c.line = line; c.t = t; c.pos = t; c.lineId = key;
@@ -203,7 +207,7 @@ function splineMode(ev, dn, q, parents, emit, seed) {
       emit({ p: [S.px, S.py, S.pz], axis: [S.tx, S.ty, S.tz], radial: around(f, a), t, key, line, s, mirror: !!mirror });
     });
     // Without this a line just stops, which reads as a cut branch.
-    if (P.tipOn) {
+    if (P.tipOn && !line.cut) {
       c.line = line; c.t = 1; c.pos = 1; c.lineId = key0;
       const count = Math.max(1, Math.round(q.tipCount ? q.tipCount(c) : +P.tipCount || 1));
       sampleLine(line, L, S);
@@ -258,23 +262,27 @@ function meshMode(ev, dn, q, emit, seed, parents) {
       if (prune && softNoise(pt.p[0], pt.p[1], pt.p[2], +P.pruneScale || 50, seed) * 0.5 + 0.5 < prune) return;
       const axis = norm(mix3([0, 1, 0], norm(pt.n), follow));
       const k = (seed + i * 31 + 1) | 0;
-      emit({ p: pt.p, axis, radial: rotate(perpendicular(axis), axis, hash(seed, k, 9) * Math.PI * 2), t: bhi > blo ? (local.p[1] - blo) / (bhi - blo) : 0, key: k, line, s: 0 });
+      emit({ p: pt.p, axis, radial: rotate(perpendicular(axis), axis, hash(seed, k, 9) * Math.PI * 2), t: bhi > blo ? (local.p[1] - blo) / (bhi - blo) : 0, key: k, line, s: 0, n: pt.n });
     });
   }
   // Faces and vertices need the shape as triangles: a drawn primitive is baked into one.
   const mode = P.meshOn || 'random';
   let surf = shape;
-  if ((mode === 'faces' || mode === 'vertices') && !shape.triangles && ol) {
+  if ((mode === 'faces' || mode === 'vertices' || mode === 'layers') && !shape.triangles && ol) {
     const b = bakeShape(ev.nodes.get(ol.from).params);
     surf = makeShape({ shape: 'imported', obj: { v: b.v, idx: b.idx }, sizeX: 100, pos: [0, 0, 0] });
   }
   if (mode === 'faces' || mode === 'vertices') {
     const pts = mode === 'faces'
       ? surf.triangles.map((t) => ({ p: [0, 1, 2].map((c) => (t.a[c] + t.b[c] + t.c[c]) / 3), n: t.n }))
-      : surf.vertices.map((p, i) => ({ p, n: vertexNormal(surf.triangles, p, i) }));
+      : vertexPoints(surf.triangles);
     return fixedPoints(pts);
   }
-  if (mode === 'layers') return fixedPoints(layerPoints(shape, seed, Math.max(1, Math.round(+P.layers || 8)), countOf(q, ev.ctx, seed, 7), P.layerStagger !== false));
+  if (mode === 'layers') {
+    const layers = Math.max(1, Math.round(+P.layers || 8));
+    const per = Math.max(1, Math.round(+P.layerPer || countOf(q, ev.ctx, seed, 7) / layers));
+    return fixedPoints(layerPoints(surf, seed, layers, per, P.layerStagger !== false, { X: 0, Y: 2, Z: 1 }[P.layerAxis] ?? 1));
+  }
   const grid = new Map();
   let made = 0;
   // Tries more points than asked, so spacing and pruning still reach the count when they can.
@@ -298,32 +306,60 @@ function meshMode(ev, dn, q, emit, seed, parents) {
     const axis = norm(mix3([0, 1, 0], norm(pt.n), follow));
     const k = (seed + made * 31 + 1) | 0;
     const radial = rotate(perpendicular(axis), axis, hash(seed, k, 9) * Math.PI * 2);
-    emit({ p: pt.p, axis, radial, t: hi > lo ? (local.p[1] - lo) / (hi - lo) : made / Math.max(1, n - 1), key: k, line, s: 0 });
+    emit({ p: pt.p, axis, radial, t: hi > lo ? (local.p[1] - lo) / (hi - lo) : made / Math.max(1, n - 1), key: k, line, s: 0, n: pt.n });
     made++;
   }
 }
 
-// A point's normal on a triangle mesh: the average of the faces that touch it.
-function vertexNormal(tris, p) {
-  const n = [0, 0, 0];
-  for (const t of tris) if (t.a === p || t.b === p || t.c === p) { n[0] += t.n[0]; n[1] += t.n[1]; n[2] += t.n[2]; }
-  return Math.hypot(...n) > 1e-9 ? norm(n) : [0, 1, 0];
+// One point per mesh position with the average normal of the faces around it. Matched by position, since
+// the triangles hold their own copies of the points and a baked mesh splits points along its seams.
+export function vertexPoints(tris) {
+  const map = new Map();
+  for (const t of tris) {
+    // A sphere's poles have flat triangles with no normal of their own.
+    if (Math.hypot(...cross(sub(t.b, t.a), sub(t.c, t.a))) < 1e-9) continue;
+    for (const p of [t.a, t.b, t.c]) {
+      const k = `${Math.round(p[0] * 1e3)},${Math.round(p[1] * 1e3)},${Math.round(p[2] * 1e3)}`;
+      const v = map.get(k) || map.set(k, { p, n: [0, 0, 0] }).get(k);
+      v.n[0] += t.n[0]; v.n[1] += t.n[1]; v.n[2] += t.n[2];
+    }
+  }
+  return [...map.values()].map((v) => ({ p: v.p, n: Math.hypot(...v.n) > 1e-9 ? norm(v.n) : [0, 1, 0] }));
 }
 
-// Rows around a shape from the bottom up, like roof tiles: each row is a ring of points on the surface at one
-// height, spread evenly around, every other row turned half a step.
-export function layerPoints(shape, seed, layers, count, stagger = true) {
-  const [lo, hi] = [shape.bounds[0][1], shape.bounds[1][1]];
-  const c = [(shape.bounds[0][0] + shape.bounds[1][0]) / 2, 0, (shape.bounds[0][2] + shape.bounds[1][2]) / 2];
-  const per = Math.max(1, Math.round(count / layers));
-  const R = Math.max(shape.bounds[1][0] - shape.bounds[0][0], shape.bounds[1][2] - shape.bounds[0][2]) * 2 + 1;
+// The first triangle a ray from o along d meets (Moller-Trumbore), or null.
+function rayHit(tris, o, d) {
+  let best = Infinity; let tri = null;
+  for (const t of tris) {
+    const e1 = sub(t.b, t.a); const e2 = sub(t.c, t.a);
+    const pv = cross(d, e2); const det = dot(e1, pv);
+    if (Math.abs(det) < 1e-12) continue;
+    const tv = sub(o, t.a); const u = dot(tv, pv) / det;
+    if (u < 0 || u > 1) continue;
+    const qv = cross(tv, e1); const v = dot(d, qv) / det;
+    if (v < 0 || u + v > 1) continue;
+    const k = dot(e2, qv) / det;
+    if (k > 0 && k < best) { best = k; tri = t; }
+  }
+  return tri ? { p: add(o, mul(d, best)), n: tri.n } : null;
+}
+
+// Rows around a shape along an axis (engine index, 1 is up), like roof tiles: each row is a ring of per points
+// on the surface at one height, spread evenly around, every other row turned half a step.
+export function layerPoints(shape, seed, layers, per, stagger = true, axis = 1) {
+  const [b, c] = [[1, 2], [2, 0], [0, 1]][axis];
+  const [lo, hi] = [shape.bounds[0][axis], shape.bounds[1][axis]];
+  const mid = [0, 1, 2].map((k) => (shape.bounds[0][k] + shape.bounds[1][k]) / 2);
+  const R = Math.max(shape.bounds[1][b] - shape.bounds[0][b], shape.bounds[1][c] - shape.bounds[0][c]) * 2 + 1;
   const out = [];
   for (let l = 0; l < layers; l++) {
-    const y = lo + (hi - lo) * ((l + 0.5) / layers);
+    const h = lo + (hi - lo) * ((l + 0.5) / layers);
     for (let i = 0; i < per; i++) {
       const a = ((i + (stagger && l % 2 ? 0.5 : 0)) / per) * Math.PI * 2;
-      // From far outside toward the axis: the closest surface point there.
-      const hit = shape.closest([c[0] + Math.cos(a) * R, y, c[2] + Math.sin(a) * R]);
+      // From far outside toward the axis: the outermost surface the ray meets at that height.
+      const dir = [0, 0, 0]; dir[b] = Math.cos(a); dir[c] = Math.sin(a);
+      const q = [0, 0, 0]; q[axis] = h; q[b] = mid[b] + dir[b] * R; q[c] = mid[c] + dir[c] * R;
+      const hit = (shape.triangles && rayHit(shape.triangles, q, [-dir[0], -dir[1], -dir[2]])) || shape.closest(q);
       out.push({ p: hit.p, n: hit.n });
     }
   }

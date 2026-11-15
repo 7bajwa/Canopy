@@ -14,8 +14,18 @@ import { showLength, parseLength } from './units.js';
 let serial = 0;
 
 // A cutout as a small picture with a check box, so a node can pick flowers, leaves or stems from one atlas.
-function cutThumb(m, c, on, fn) {
+function cutThumb(m, c, on, fn, pos) {
   const box = el('label', `cut-thumb${on ? ' on' : ''}`);
+  if (pos) {
+    // Earlier and later in the node's list; buttons rather than a drag so they work by touch too.
+    const row = el('div', 'cut-move');
+    for (const [d, txt, tip, off] of [[-1, '◀', 'Earlier in the list', pos.first], [1, '▶', 'Later in the list', pos.last]]) {
+      const b = el('button', '', txt); b.type = 'button'; b.title = tip; b.disabled = off;
+      b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); pos.move(d); });
+      row.append(b);
+    }
+    box.append(row);
+  }
   const check = el('input'); check.type = 'checkbox'; check.checked = on;
   check.addEventListener('change', () => fn(check.checked));
   const canvas = el('canvas'); canvas.width = canvas.height = 72;
@@ -39,8 +49,9 @@ function cutThumb(m, c, on, fn) {
 export const splineMods = () => Object.values(NODE_TYPES).filter((d) => d.type.startsWith('Dir_') && !d.tool && !d.retired && d.type !== 'Dir_Wind');
 
 export function modChoices(set) {
-  if (set === 'spline') return splineMods().map((d) => ({ type: d.type, title: d.title, desc: d.desc }));
-  return Object.entries(set === 'shape' ? SHAPE_MODS : SURFACE_MODS).map(([type, d]) => ({ type, title: d.title, desc: d.desc }));
+  const list = set === 'spline' ? splineMods().map((d) => ({ type: d.type, title: d.title, desc: d.desc }))
+    : Object.entries(set === 'shape' ? SHAPE_MODS : SURFACE_MODS).filter(([, d]) => !d.retired).map(([type, d]) => ({ type, title: d.title, desc: d.desc }));
+  return list.sort((a, b) => String(a.title).localeCompare(String(b.title)));
 }
 
 function freshMod(set, type) {
@@ -188,15 +199,25 @@ export function makeEditors(ui) {
         const pick = node.params.cutoutPick;
         const body = [checkField('All of them', !Array.isArray(pick), (v) => { node.params.cutoutPick = v ? null : []; changed({ layout: true }); commit(); draw(); })];
         const grid = el('div', 'cut-grid');
-        for (const c of m.cutouts) {
+        // The node's own order, which By curve spreads from first (base) to last (tip).
+        const order = Array.isArray(node.params.cutoutOrder) ? node.params.cutoutOrder : [];
+        const rank = (c) => { const r = order.indexOf(c.id); return r < 0 ? order.length + m.cutouts.indexOf(c) : r; };
+        const list = [...m.cutouts].sort((a, b) => rank(a) - rank(b));
+        list.forEach((c, i) => {
           const on = !Array.isArray(pick) || pick.includes(c.id);
+          const move = (d) => {
+            const ids = list.map((x) => x.id);
+            [ids[i], ids[i + d]] = [ids[i + d], ids[i]];
+            node.params.cutoutOrder = ids;
+            changed({ layout: true }); commit(); draw();
+          };
           grid.append(cutThumb(m, c, on, (v) => {
             const now = Array.isArray(node.params.cutoutPick) ? node.params.cutoutPick : m.cutouts.map((x) => x.id);
             const next = v ? [...new Set([...now, c.id])] : now.filter((id) => id !== c.id);
             node.params.cutoutPick = next.length === m.cutouts.length ? null : next;
             changed({ layout: true }); commit(); draw();
-          }));
-        }
+          }, { first: i === 0, last: i === list.length - 1, move }));
+        });
         body.push(grid);
         open(p, `Cutouts from ${m.name}`, body);
       };

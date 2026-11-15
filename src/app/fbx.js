@@ -124,10 +124,12 @@ const SLOTS = { diffuse: 'DiffuseColor', normal: 'NormalMap', opacity: 'Transpar
 
 // meshes: [{ name, position, normal, uv, color, index, rgb: [r, g, b] }], all flat arrays. Optional: colorA (RGBA),
 // uvs (more UV sets), translation and rotation (degrees, XYZ), materials [{ name, rgb, maps: { diffuse, normal,
-// opacity: { file, bytes? } } }] with polyMat (a material number per triangle).
+// opacity: { file, bytes? } } }] with polyMat (a material number per triangle), parent (index of the mesh this one
+// hangs from, its translation and rotation then local to it).
 export function writeFbx(meshes) {
   const objects = [];
   const links = [];
+  const models = [];
   const videos = new Map();
   let id = 1000000;
   let counts = { Model: 0, Geometry: 0, Material: 0, Texture: 0, Video: 0 };
@@ -142,7 +144,8 @@ export function writeFbx(meshes) {
         node('Culling', [S('CullingOff')]),
       ]),
     );
-    links.push([model, 0], [geometry, model]);
+    models.push(model);
+    links.push([model, m], [geometry, model]);
     counts.Model++; counts.Geometry++;
     for (const mat of m.materials || [{ name: m.name, rgb: m.rgb }]) {
       const material = ++id;
@@ -179,6 +182,8 @@ export function writeFbx(meshes) {
       }
     }
   }
+  // Models hang from their parent model, so outliners show the plant's hierarchy; the rest from the scene root.
+  for (const l of links) if (typeof l[1] === 'object') l[1] = models[l[1].parent] ?? 0;
   const axes = (k, v) => [S(k), S('int'), S('Integer'), S(''), I(v)];
   const doc = [
     node('FBXHeaderExtension', [], [node('FBXHeaderVersion', [I(1003)]), node('FBXVersion', [I(VERSION)]), node('Creator', [S('Canopy tree editor')])]),

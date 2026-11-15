@@ -24,7 +24,7 @@ test('mesh placement on faces and vertices makes one per face or point', () => {
 
 test('layers ring a shape from the bottom up, staggered', () => {
   const shape = makeShape({ shape: 'sphere', radius: 50, sizeX: 100, sizeY: 100, sizeZ: 100, pos: [0, 0, 0] });
-  const pts = layerPoints(shape, 1, 4, 32, true);
+  const pts = layerPoints(shape, 1, 4, 8, true);
   assert.equal(pts.length, 32);
   assert.ok(pts[0].p[1] < pts[31].p[1], 'bottom first');
 });
@@ -65,4 +65,48 @@ test('a tip tube carries its parent on: no end cap between them, same thickness 
   assert.equal(typeof continueTips, 'function');
   const r = evaluate(g, {});
   assert.ok(r.meshes.length >= 2);
+});
+
+// The first segment of each line of node id: [start, direction].
+const starts = (g, id) => {
+  const L = evaluate(g, {}).lines; const seen = new Map();
+  for (let k = 0; k < L.owner.length; k += 2) {
+    if (L.nodeIds[L.owner[k]] !== id || seen.has(L.lineId[k])) continue;
+    const a = [0, 1, 2].map((j) => L.position[k * 3 + j]); const b = [0, 1, 2].map((j) => L.position[k * 3 + 3 + j]);
+    const d = b.map((v, j) => v - a[j]); const l = Math.hypot(...d);
+    seen.set(L.lineId[k], [a, d.map((v) => v / l)]);
+  }
+  return [...seen.values()];
+};
+
+test('vertex placement follows the vertex normals', () => {
+  const ball = node('m', 'Mesh', { shape: 'sphere', radius: 50, segments: 8, show: false });
+  const g = { nodes: [ball, node('s', 'Spline', { place: 'mesh', meshOn: 'vertices', length: 10, slope: 180, meshType: 'none' })], links: [{ id: 'l', from: 'm', fromSock: 'children', to: 's', toSock: 'parent' }], groups: [], settings: {} };
+  const list = starts(g, 's');
+  assert.ok(list.length > 10);
+  const c = [0, 1, 2].map((j) => list.reduce((s, [p]) => s + p[j], 0) / list.length);
+  for (const [p, d] of list) {
+    const o = p.map((v, j) => v - c[j]); const l = Math.hypot(...o);
+    assert.ok((o[0] * d[0] + o[1] * d[1] + o[2] * d[2]) / l > 0.9, `points out of the ball at ${p.map(Math.round)}`);
+  }
+});
+
+test('layers stack along the chosen axis, so many per layer', () => {
+  const b = bakeShape({ shape: 'sphere', radius: 50, segments: 16 });
+  const shape = makeShape({ shape: 'imported', obj: { v: b.v, idx: b.idx }, sizeX: 100, pos: [0, 0, 0] });
+  const pts = layerPoints(shape, 1, 3, 5, false, 0);
+  assert.equal(pts.length, 15);
+  const xs = [0, 5, 10].map((i) => pts[i].p[0]);
+  assert.ok(xs[0] < xs[1] && xs[1] < xs[2], 'layers run along X');
+  assert.ok(Math.abs(pts[0].p[0] - pts[4].p[0]) < 1e-3, 'one layer sits at one X');
+  const ball = node('m', 'Mesh', { shape: 'sphere', radius: 50, segments: 12, show: false });
+  const g = { nodes: [ball, node('s', 'Spline', { place: 'mesh', meshOn: 'layers', layers: 3, layerPer: 5, layerAxis: 'X', length: 10, meshType: 'none' })], links: [{ id: 'l', from: 'm', fromSock: 'children', to: 's', toSock: 'parent' }], groups: [], settings: {} };
+  assert.equal(lines(g, 's'), 15);
+});
+
+test('children start on the parent surface when asked, at its center line when not', () => {
+  const g = (onSurface) => ({ nodes: [node('a', 'Spline', { length: 300, radius: 10 }), node('b', 'Spline', { place: 'spline', density: 4, tipOn: false, length: 40, radius: 1, tilt: 60, onSurface })], links: [{ id: 'l', from: 'a', fromSock: 'children', to: 'b', toSock: 'parent' }], groups: [], settings: {} });
+  const off = (on) => { const list = starts(g(on), 'b'); assert.ok(list.length > 2); return list.reduce((s, [p]) => s + Math.hypot(p[0], p[2]), 0) / list.length; };
+  assert.ok(off(false) < 0.5, `center ${off(false)}`);
+  assert.ok(off(true) > 3, `surface ${off(true)}`);
 });

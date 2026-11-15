@@ -53,6 +53,7 @@ export function describeHit(hit) {
     return { title: `${hit.sock.dir === 'in' ? 'Input' : 'Output'}: ${param ? param.l : hit.sock.l || name}`, text: about };
   }
   if (hit.part === 'power') return { title: hit.node.on === false ? 'Turned off' : 'Turned on', text: 'Click to switch this node on or off.' };
+  if (hit.part === 'mute') return { title: hit.node.mute ? 'Muted' : 'Mute', text: 'Click to mute this node: it makes nothing, but its children still grow, from its parent instead.' };
   if (hit.part === 'fold') return { title: 'Show more or less', text: 'Click to cycle through short, normal and all settings on the node.' };
   if (hit.part === 'tab') { const t = TABS[hit.tab]; return { title: t.label, text: t.text }; }
   if (hit.part === 'row') {
@@ -209,8 +210,8 @@ export class GraphView {
       const n = nodes[i];
       const l = this.layout(n);
       if (x < n.x - reach || x > n.x + l.w + reach || y < n.y - reach || y > n.y + l.h + reach) continue;
-      // The eye on the header wins over the output socket beside it.
-      if (y - n.y < HEADER && y >= n.y && x - n.x > l.w - 34 && x - n.x < l.w - 6) continue;
+      // The eye and mute buttons on the header win over the output socket beside them.
+      if (y - n.y < HEADER && y >= n.y && x - n.x > l.w - 58 && x - n.x < l.w - 6) continue;
       for (const s of l.sockets.values()) {
         if (s.hidden) continue;
         const d = (n.x + s.x - x) ** 2 + (n.y + s.y - y) ** 2;
@@ -226,6 +227,7 @@ export class GraphView {
       if (l.tabs && ly >= l.tabY && ly < l.tabY + TAB_H) return { part: 'tab', node: n, tab: l.tabs[Math.min(l.tabs.length - 1, Math.floor((lx / l.w) * l.tabs.length))] };
       if (ly < l.header) {
         if (ly < HEADER && lx > l.w - 34 && lx < l.w - 6) return { part: 'power', node: n };
+        if (ly < HEADER && lx > l.w - 58 && lx <= l.w - 34) return { part: 'mute', node: n };
         if (ly < HEADER && lx < 22 && !l.tabs) return { part: 'fold', node: n };
         return { part: 'header', node: n };
       }
@@ -239,6 +241,39 @@ export class GraphView {
     }
     const link = this.linkAt(x, y);
     return link ? { part: 'link', link } : null;
+  }
+
+  // Whether a socket can take the wire being dragged.
+  fits(n, s, d = this.drag) {
+    return !!d && !s.hidden && d.dir !== s.dir && d.nodeId !== n.id && (d.dir === 'out' ? kindFits(d.kind, s) : kindFits(s.kind, { kind: d.kind, also: d.also }));
+  }
+
+  // Where a dragged wire would plug in: the nearest fitting socket within a generous reach, or,
+  // over a node, its best fitting socket (a main one first), so the wire can be dropped anywhere on it.
+  snapTarget(sx, sy, d = this.drag) {
+    if (!d) return null;
+    const { x, y } = this.toWorld(sx, sy);
+    const reach = (this.touch ? 44 : 30) / this.z;
+    let best = null; let bd = reach * reach;
+    for (const n of doc.graph.nodes) {
+      const l = this.layout(n);
+      if (x < n.x - reach || x > n.x + l.w + reach || y < n.y - reach || y > n.y + l.h + reach) continue;
+      for (const s of l.sockets.values()) {
+        if (!this.fits(n, s, d)) continue;
+        const dd = (n.x + s.x - x) ** 2 + (n.y + s.y - y) ** 2;
+        if (dd < bd) { bd = dd; best = { node: n, sock: s }; }
+      }
+    }
+    if (best) return best;
+    const nodes = this.drawOrder();
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const n = nodes[i]; const l = this.layout(n);
+      if (x < n.x || y < n.y || x > n.x + l.w || y > n.y + l.h) continue;
+      const list = [...l.sockets.values()].filter((s) => this.fits(n, s, d));
+      const s = list.find((q) => q.main) || list[0];
+      return s ? { node: n, sock: s } : null;
+    }
+    return null;
   }
 
   linkAt(x, y) {
@@ -379,7 +414,8 @@ export class GraphView {
     const cat = CATS[def.cat];
     const sel = doc.sel.has(n.id);
     const off = n.on === false;
-    c.globalAlpha = off ? 0.5 : 1;
+    const muted = n.mute === true;
+    c.globalAlpha = off ? 0.5 : muted ? 0.8 : 1;
     // Far away, a colored block is all that can be read, and it is much cheaper.
     if (this.z < 0.22) {
       c.fillStyle = sel ? T.accent : def.cat === 'plant' ? T.head : cat.color;
@@ -394,8 +430,16 @@ export class GraphView {
     }
     c.fillStyle = T.body;
     c.beginPath(); c.roundRect(n.x, n.y, l.w, l.h, 6); c.fill();
-    c.fillStyle = off ? '#454a44' : def.cat === 'plant' ? T.head : cat.color;
+    c.fillStyle = off ? '#454a44' : muted ? '#5b5470' : def.cat === 'plant' ? T.head : cat.color;
     c.beginPath(); c.roundRect(n.x, n.y, l.w, l.header, l.h > l.header ? [6, 6, 0, 0] : 6); c.fill();
+    // Muted: stripes on the title bar and a dashed edge, so a bypassed node reads at a glance.
+    if (muted) {
+      c.save(); c.clip(); c.strokeStyle = 'rgba(255,208,77,.22)'; c.lineWidth = 5;
+      c.beginPath(); for (let i = -l.header; i < l.w; i += 14) { c.moveTo(n.x + i, n.y + l.header); c.lineTo(n.x + i + l.header, n.y); } c.stroke(); c.restore();
+      c.save(); c.strokeStyle = '#ffd04d'; c.setLineDash([6, 4]); c.lineWidth = 1.5 / Math.min(this.z, 1);
+      c.beginPath(); c.roundRect(n.x - 0.5, n.y - 0.5, l.w + 1, l.h + 1, 6.5); c.stroke(); c.restore();
+    }
+    if (this.drag?.target?.node === n) { c.strokeStyle = KIND[this.drag.target.sock.kind] || '#fff'; c.lineWidth = 2.5 / Math.min(this.z, 1); c.beginPath(); c.roundRect(n.x - 3, n.y - 3, l.w + 6, l.h + 6, 8); c.stroke(); }
     if (sel) { c.strokeStyle = '#9be15d'; c.lineWidth = 2 / Math.min(this.z, 1); c.beginPath(); c.roundRect(n.x - 1, n.y - 1, l.w + 2, l.h + 2, 7); c.stroke(); }
     c.textBaseline = 'middle';
     const titleX = l.tabs ? 10 : 24;
@@ -409,11 +453,13 @@ export class GraphView {
       c.font = `400 ${9.5 * TS}px ${FONT}`;
       c.fillStyle = wa(.65);
       c.textAlign = 'right';
-      if (titleX + tw + 70 < l.w) c.fillText(short(def.title, 14), n.x + l.w - 36, n.y + HEADER / 2 + 0.5);
+      if (titleX + tw + 94 < l.w) c.fillText(short(def.title, 14), n.x + l.w - 60, n.y + HEADER / 2 + 0.5);
       c.textAlign = 'left';
     }
     // The eye on the right turns the node on and off; it closes while the node is off.
     drawEye(c, n.x + l.w - 20, n.y + HEADER / 2, !off);
+    // Left of the eye: mute, a wire hopping over the node.
+    drawMute(c, n.x + l.w - 46, n.y + HEADER / 2, muted);
     if (!l.tabs) {
       c.fillStyle = wa(.75);
       c.font = `600 13px ${FONT}`;
@@ -645,14 +691,20 @@ export class GraphView {
     for (const s of l.sockets.values()) {
       if (s.hidden) continue;
       const x = n.x + s.x; const y = n.y + s.y;
-      const fits = drag && drag.dir !== s.dir && drag.nodeId !== n.id && (drag.dir === 'out' ? kindFits(drag.kind, s) : kindFits(s.kind, drag.sock));
+      const fits = drag && this.fits(n, s);
+      const target = drag?.target && drag.target.node === n && drag.target.sock.k === s.k;
+      if (target) {
+        // The socket the wire will plug into: a soft halo around it.
+        c.globalAlpha = 0.35; c.fillStyle = KIND[s.kind] || '#fff';
+        c.beginPath(); c.arc(x, y, 15, 0, 7); c.fill();
+      }
       c.fillStyle = KIND[s.kind] || '#999';
       c.globalAlpha = drag && !fits ? 0.25 : n.on === false ? 0.5 : 1;
       c.beginPath();
-      const r = fits ? 7.5 : s.main ? 6 : 4.5;
+      const r = target ? 9 : fits ? 7.5 : s.main ? 6 : 4.5;
       if (s.main) { c.roundRect(x - r, y - r, r * 2, r * 2, 2.5); } else { c.arc(x, y, r, 0, 7); }
       c.fill();
-      if (fits) { c.strokeStyle = '#fff'; c.lineWidth = 1.5; c.stroke(); }
+      if (fits) { c.strokeStyle = '#fff'; c.lineWidth = target ? 2.5 : 1.5; c.stroke(); }
     }
     c.globalAlpha = 1;
   }
@@ -683,6 +735,18 @@ export function modDef(set, type) {
 }
 
 const REF = { k: 'object', l: 'Object', t: 'ref', d: null };
+
+// The settings under one section heading of a node type, up to the next heading.
+export function sectionParams(type, key) {
+  const list = NODE_TYPES[type].params; const at = list.findIndex((p) => p.k === key);
+  if (at < 0) return [];
+  const out = [];
+  for (const p of list.slice(at + 1)) {
+    if (p.t === 'section' || p.t === 'mods' || p.tab !== list[at].tab) break;
+    if (p.t !== 'data' && p.t !== 'action') out.push(p);
+  }
+  return out;
+}
 
 function modParams(set, mod) {
   const d = modDef(set, mod.type);
@@ -720,6 +784,14 @@ function rowZone(r, lx, varBox) {
   if (g.vary && lx >= g.vary[0] && lx < g.vary[1]) return 'var';
   if (lx >= g.box[0] && lx <= g.box[1]) return 'box';
   return 'label';
+}
+
+function drawMute(c, x, y, on) {
+  c.save(); c.strokeStyle = on ? '#ffd04d' : '#fff'; c.lineWidth = 1.4; c.lineCap = 'round';
+  c.globalAlpha *= on ? 1 : 0.55;
+  c.beginPath(); c.moveTo(x - 8, y + 3); c.lineTo(x - 5, y + 3); c.bezierCurveTo(x - 4, y - 6, x + 4, y - 6, x + 5, y + 3); c.lineTo(x + 8, y + 3); c.stroke();
+  c.beginPath(); c.arc(x, y + 3, 1.6, 0, 7); c.stroke();
+  c.restore();
 }
 
 function drawEye(c, x, y, open) {
@@ -817,7 +889,7 @@ function buildLayout(node) {
       closed = false;
       if (tabs && inTab && shown(p, node.params)) {
         const open = !p.fold || !!node.folds?.[p.k];
-        addRow({ kind: 'head', label: p.l, h: ROW + 2, fold: p.fold ? p.k : null, open });
+        addRow({ kind: 'head', label: p.l, h: ROW + 2, fold: p.fold ? p.k : null, open, section: p.k });
         closed = !open;
       }
       continue;

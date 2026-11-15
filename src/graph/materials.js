@@ -28,6 +28,8 @@ export function migrateGraph(graph) {
   graph.materials ||= [];
   const byLook = new Map(graph.materials.map((m) => [JSON.stringify(keys.map((k) => m[k])), m]));
   for (const n of graph.nodes) {
+    // Zigzag once took a side offset (Radius); now each step turns by an angle, set here to give the same shape.
+    for (const m of n.type === 'Dir_Zigzag' ? [n] : n.params?.mods || []) if (m.type === 'Dir_Zigzag' && m.params && m.params.angle === undefined) m.params.angle = Math.atan2(2 * +(m.params.radius ?? 6), Math.max(0.5, +(m.params.steps ?? 25))) * 180 / Math.PI;
     if (!TABBED.has(n.type)) continue;
     const P = n.params;
     // Transforms, once three-number boxes, are one value per axis now.
@@ -45,6 +47,9 @@ export function migrateGraph(graph) {
     if (P.vary?.scl !== undefined) { P.vary.sclU = P.vary.scl; delete P.vary.scl; }
     // Trunk flare became part of Blend (the floor is a trunk's parent). Older blends spread evenly, and a line with
     // no parent didn't blend at all, so those keep their look.
+    // Older lines started at their parent's center line; Per layer once came from Count shared over the layers.
+    if (n.type === 'Spline' && P.onSurface === undefined) P.onSurface = false;
+    if (P.layerPer === undefined && P.meshOn === 'layers') P.layerPer = Math.max(1, Math.round((+P.count || 1) / (+P.layers || 8)));
     if (n.type === 'Spline' && P.blendOffset === undefined) {
       P.blendOffset = 0;
       if (P.flareOn) Object.assign(P, { blend: true, blendLength: P.flareHeight ?? 3, blendFlare: P.flareSpread ?? 1, blendRoots: P.flareRoots ?? 5, blendRootDepth: P.flareRootDepth ?? 0.45, blendRootTurn: P.flareTwist ?? 0 });
@@ -60,6 +65,8 @@ export function migrateGraph(graph) {
     }
     // The ball of lines was once called Sprout, which clashed with a leaf's sprout points.
     if (P.place === 'sprout') P.place = 'urchin';
+    // Tube UVs once wrapped twice around and repeated by Repeat every; older files keep that.
+    if (P.tileU !== undefined && P.uvMatch === undefined) P.uvMatch = false;
     // Transforms were once in world axes with Y up; now they use the gizmo's axes (Z up), and new ones the entity's own.
     if (P.xfSpace === undefined) {
       P.xfSpace = 'world';
@@ -87,6 +94,12 @@ export function migrateGraph(graph) {
     }
     P.material = m.id;
     for (const k of [...keys, 'atlas', 'roughness', 'sss', 'metalness']) delete P[k];
+  }
+  // Growth was once a tab on the Spline; such a Spline is a Growth node now, with the same settings and links.
+  for (const n of graph.nodes) {
+    if (n.type !== 'Spline' || !n.params?.growOn || n.params.strokes?.length) continue;
+    n.type = 'Growth';
+    if (n.tab && !['growth', 'place', 'mesh', 'material', 'wind'].includes(n.tab)) n.tab = 'growth';
   }
   return graph;
 }

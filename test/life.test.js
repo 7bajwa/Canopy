@@ -17,7 +17,8 @@ const run = (life) => {
 test('Age, Season and Health change the plant in the expected direction', () => {
   const base = run(null);
   const same = run({ age: 1, season: 0.25, health: 1 });
-  assert.equal(same.leaf, base.leaf, 'defaults leave the plant as designed');
+  // Summer keeps nearly every leaf: the season curve has a few fallen already.
+  assert.ok(same.leaf < base.leaf && same.leaf > base.leaf * 0.85, `summer is nearly as designed: ${same.leaf} vs ${base.leaf}`);
   const young = run({ age: 0.4 });
   assert.ok(young.top < base.top * 0.8, `younger is shorter: ${young.top} vs ${base.top}`);
   assert.ok(young.leaf < base.leaf, 'younger has fewer leaves');

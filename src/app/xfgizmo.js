@@ -2,7 +2,7 @@
 // all three at once (arrows move, rings turn, small boxes scale); Move, Rotate and Scale show one. By default it edits
 // entities: click a branch, leaf or mesh copy (shift-click or drag a box for more) and the gizmo sits at their middle;
 // dragging stores a per-entity move, turn and scale on its node (params.inst, by the entity's key), so only those
-// change and their children follow. Each turns and scales about its own base. With "All entities" it writes the
+// change and their children follow. Each turns and scales about its own base. With "All" it writes the
 // node's Position, Rotation and Scale values instead, so every entity of the node follows. Deleting an entity hides
 // it (and what grows on it). The gizmo is driven by the editor's own pointer handling (the graph canvas lies over the
 // 3D view).
@@ -29,6 +29,7 @@ export class XfGizmo {
     this.scope = 'copy';
     this.mode = 'all';
     this.picks = [];
+    this.boxMode = 'touch';
     this.obj = new THREE.Object3D();
     view.scene.add(this.obj);
     // Loose elements: the controls hear only what pointer() passes them.
@@ -71,25 +72,31 @@ export class XfGizmo {
     }
     this.place();
   }
-  // Box selection: every entity whose base lies inside the screen rectangle (stage coordinates), of the selected
-  // nodes (of every node when none is selected).
+  // Box selection, of the selected nodes (of every node when none is selected): with boxMode 'touch' every entity a
+  // line of which crosses the screen rectangle (stage coordinates), with 'cover' only those lying wholly inside it.
   pickBox(b, add = false) {
-    const found = new Map();
     const L = doc.result?.lines; if (!L) return 0;
     const r = this.view.rect; const v = new THREE.Vector3();
+    const cover = this.boxMode === 'cover';
+    const seen = new Map(); // key -> { e, any, all }
+    const at = (k) => { v.set(L.position[k * 3], L.position[k * 3 + 1], L.position[k * 3 + 2]).project(this.view.camera); return v.z < 1 ? [r.x + ((v.x + 1) / 2) * r.w, r.y + ((1 - v.y) / 2) * r.h] : null; };
     for (let k = 0; k < L.owner.length; k += 2) {
       const id = L.nodeIds[L.owner[k]]; const inst = L.inst?.[k];
+      if (!inst || (doc.sel.size && !doc.sel.has(id)) || !editable(nodeOf(id))) continue;
       const key = `${id}:${inst}`;
-      if (!inst || found.has(key) || (doc.sel.size && !doc.sel.has(id)) || !editable(nodeOf(id))) continue;
-      if (k > 0 && L.lineId[k - 2] === L.lineId[k]) continue; // only a line's first segment holds its base
-      v.set(L.position[k * 3], L.position[k * 3 + 1], L.position[k * 3 + 2]).project(this.view.camera);
-      const x = r.x + ((v.x + 1) / 2) * r.w; const y = r.y + ((1 - v.y) / 2) * r.h;
-      if (v.z < 1 && x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) found.set(key, { nodeId: id, inst });
+      let s = seen.get(key);
+      if (!s) seen.set(key, s = { e: { nodeId: id, inst }, any: false, all: true });
+      if (cover ? !s.all : s.any) continue;
+      const p = at(k); const q = at(k + 1);
+      if (!p || !q) { s.all = false; continue; }
+      if (!inBox(p, b) || !inBox(q, b)) s.all = false;
+      if (segHitsBox(p, q, b)) s.any = true;
     }
+    const found = [...seen.values()].filter((s) => (cover ? s.all : s.any)).map((s) => s.e);
     if (!add) this.picks = [];
-    for (const e of found.values()) if (!this.picks.some((p) => p.nodeId === e.nodeId && p.inst === e.inst)) this.picks.push(e);
+    for (const e of found) if (!this.picks.some((p) => p.nodeId === e.nodeId && p.inst === e.inst)) this.picks.push(e);
     this.place();
-    return found.size;
+    return found.length;
   }
 
   // Undoes the edit of the current tool (all of it with the Transform tool): on the picked entities, or on the node.
@@ -236,4 +243,17 @@ export class XfGizmo {
     }
     return false;
   }
+}
+
+const inBox = (p, b) => p[0] >= b.x0 && p[0] <= b.x1 && p[1] >= b.y0 && p[1] <= b.y1;
+// Whether a screen segment crosses a box: clipped against its four sides (Liang-Barsky).
+export function segHitsBox(p, q, b) {
+  let t0 = 0; let t1 = 1;
+  const dx = q[0] - p[0]; const dy = q[1] - p[1];
+  for (const [d, e] of [[-dx, p[0] - b.x0], [dx, b.x1 - p[0]], [-dy, p[1] - b.y0], [dy, b.y1 - p[1]]]) {
+    if (d === 0) { if (e < 0) return false; continue; }
+    const t = e / d;
+    if (d < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; }
+  }
+  return true;
 }

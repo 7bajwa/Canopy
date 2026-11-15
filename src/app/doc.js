@@ -16,6 +16,11 @@ export const doc = {
   result: null,
   stale: false,
   layoutVersion: 0,
+  // The LOD the 3D view shows; not saved.
+  viewLod: 0,
+  // How many LODs the plant has (LOD0..LODn-1); kept in the graph settings so it saves and undoes with the plant.
+  get lods() { const n = Math.round(+(this.graph.settings?.lods ?? 4)); return Number.isFinite(n) ? Math.max(1, Math.min(8, n)) : 4; },
+  set lods(v) { this.graph.settings ||= {}; this.graph.settings.lods = Number.isFinite(+v) ? Math.max(1, Math.min(8, Math.round(+v))) : 4; },
 };
 
 // ---- History ----
@@ -68,8 +73,17 @@ function freshId(prefix = 'n') {
 }
 
 // ---- Editing ----
+// A soft, fairly bright color, so each new node's wires and Colored shading tell it apart.
+export const randomWire = () => {
+  const h = Math.random() * 360; const s = 0.55 + Math.random() * 0.2; const l = 0.58 + Math.random() * 0.1;
+  const f = (k) => { const a = (k + h / 30) % 12; return Math.round((l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(a - 3, 9 - a, 1))) * 255).toString(16).padStart(2, '0'); };
+  return `#${f(0)}${f(8)}${f(4)}`;
+};
+
 export function addNode(type, x, y, params = {}) {
-  const n = { id: freshId(), type, x, y, on: true, params: { ...defaultParams(type), ...params } };
+  const base = defaultParams(type);
+  if ('wire' in base) base.wire = randomWire();
+  const n = { id: freshId(), type, x, y, on: true, params: { ...base, ...params } };
   doc.graph.nodes.push(n);
   return n;
 }
@@ -108,13 +122,15 @@ export function connect(fromId, fromSock, toId, toSock) {
   const g = doc.graph;
   g.links = g.links.filter((l) => {
     if (!inp.multi && l.to === toId && l.toSock === toSock) return false;
+    // One wire per parent: the same parent plugged in again replaces its old wire instead of doubling it.
+    if (l.from === fromId && l.to === toId && l.toSock === toSock) return false;
     if (singleOut(out) && l.from === fromId && l.fromSock === fromSock) return false;
     return true;
   });
   g.links.push({ id: freshId('l'), from: fromId, fromSock, to: toId, toSock });
   // A connected parent decides how lines are placed, unless a mode that works anywhere was chosen.
   if (toSock === 'parent' && hasTabs(b.type)) {
-    const onMesh = a.type !== 'Spline';
+    const onMesh = a.type !== 'Spline' && a.type !== 'Growth';
     if (onMesh) b.params.place = 'mesh';
     else if (b.params.place === 'point' || b.params.place === 'mesh') b.params.place = 'spline';
     // Children usually leave their parent at an angle, so a child still standing straight starts at 45°.
@@ -162,6 +178,7 @@ export function duplicate(ids, dx = 40, dy = 40) {
   const map = new Map();
   for (const n of doc.graph.nodes.filter((x) => set.has(x.id))) {
     const c = { ...clone(n), id: freshId(), x: n.x + dx, y: n.y + dy };
+    if (c.params && 'wire' in c.params) c.params.wire = randomWire();
     map.set(n.id, c.id);
     doc.graph.nodes.push(c);
   }
@@ -172,11 +189,12 @@ export function duplicate(ids, dx = 40, dy = 40) {
 }
 
 // Adds nodes from another document, giving them fresh ids so nothing collides.
-export function mergeNodes(nodes, links, dx = 0, dy = 0) {
+export function mergeNodes(nodes, links, dx = 0, dy = 0, recolor = false) {
   const map = new Map();
   for (const n of nodes) {
     if (!NODE_TYPES[n.type]) continue;
     const c = { ...clone(n), id: freshId(), x: (n.x || 0) + dx, y: (n.y || 0) + dy };
+    if (recolor && c.params && 'wire' in c.params) c.params.wire = randomWire();
     map.set(n.id, c.id);
     doc.graph.nodes.push(c);
   }
@@ -255,7 +273,7 @@ function pump() {
 export function regenerate({ draft = false, force = false } = {}) {
   if (doc.graph.settings?.manual && !force) { doc.stale = true; emit('stale'); return; }
   if (!worker) startWorker();
-  pending = { draft };
+  pending = { draft, lod: Math.min(doc.viewLod || 0, doc.lods - 1), lods: doc.lods };
   pump();
 }
 

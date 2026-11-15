@@ -112,7 +112,7 @@ test('a Spline can carry a tube and leaves on the same line, the tube with its o
 
 test('leaf blend snaps the base of a leaf onto its parent branch', () => {
   const twig = node('Spline', { length: 200, radius: 10, mods: [], blend: false, curves: { radius: { pts: [[0, 1, 's'], [1, 1, 's']] } } });
-  const leaf = (leafBlend) => node('Spline', { place: 'spline', density: 8, start: 40, end: 60, tipOn: false, tilt: 90, length: 40, mods: [], meshType: 'leaf', width: 8, leafBlend, leafBlendHeight: 2 });
+  const leaf = (leafBlend) => node('Spline', { place: 'spline', density: 8, start: 40, end: 60, tipOn: false, tilt: 90, length: 40, mods: [], meshType: 'leaf', width: 8, leafBlend, leafBlendHeight: 2, onSurface: false });
   const minR = (on) => {
     const kid = leaf(on); const r = run([twig, kid], [link(twig, kid)]);
     const m = r.meshes.find((x) => x.nodeId === kid.id);
