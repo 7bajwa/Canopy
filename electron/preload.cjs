@@ -12,9 +12,13 @@ contextBridge.exposeInMainWorld('canopyHost', {
 
 contextBridge.exposeInMainWorld('canopyApp', {
   saveAs: (name, text) => ipcRenderer.invoke('canopy:save-as', name, text),
+  // Save over the open file, or ask where with as = true. Returns the file name, or false.
+  save: (name, text, as) => ipcRenderer.invoke('canopy:save', name, text, !!as),
+  setCurrent: (p) => ipcRenderer.send('canopy:set-current', p || null),
+  projectDir: () => ipcRenderer.invoke('canopy:project-dir'),
   backup: (when, text, name) => ipcRenderer.invoke('canopy:backup', when, text, name),
   // Saving with the pictures in a textures folder beside the file; pictures a file points at, read back.
-  savePackage: (name, text, files) => ipcRenderer.invoke('canopy:save-package', name, text, files),
+  savePackage: (name, text, files, as) => ipcRenderer.invoke('canopy:save-package', name, text, files, !!as),
   readImage: (file, dir) => ipcRenderer.invoke('canopy:read-image', file, dir),
   pathOf: (file) => webUtils.getPathForFile(file),
   // A .canopy file double-clicked in Explorer (or dropped on the app icon).

@@ -13,16 +13,22 @@ function emitter(ev, dn, q, out) {
   const seed = ev.h(dn);
   const c = ev.ctx;
   const align = clamp(+(dn.params.alignParent ?? 100) / 100, 0, 1);
+  const follow = clamp(+(dn.params.scaleParent ?? 0) / 100, 0, 1);
   const identity = !!dn.params.identity;
   const localXf = dn.params.xfSpace !== 'world';
+  // Align with parent: its side runs round the parent (square to the parent and to the way it leaves), like an
+  // umbrella's ribs, so blades lie flat across the parent at whatever angle the parent has. Off: its side lies level.
+  const alignWith = dn.params.alignWith !== false;
   // Per-copy edits from the Transform gizmo, keyed by the copy's key: t a move (world), q a turn (world quaternion
   // about the copy's base), s a scale on the copy's own axes, hide when it was deleted.
   // shortcut: keys follow the parent line ids, so a copy's edit can move to another copy when the parents' counts change; store a stable path if that bites.
   const inst = dn.params.inst || null;
   // `mirror` is the second side of a pair (or every other one): its turns run the other way, so pairs open
   // and close like wings, and its transform is reflected across the plane through the parent line.
-  return function emit({ p, axis, radial, t, key, line = null, s = 0, tilt = null, sizeK = 1, mirror = false, spinAdd = 0, rollAdd = 0, tip = false, n = null }) {
-    c.line = line; c.lineId = key; c.t = t; c.pos = t; c.level = line ? line.level + 1 : 0; c.chainPos = t;
+  // rel: where it sits between Start and End on its parent (Spline placement), which its curves read instead of t.
+  return function emit({ p, axis, radial, t, rel = null, key, line = null, s = 0, tilt = null, sizeK = 1, mirror = false, spinAdd = 0, rollAdd = 0, tip = false, n = null }) {
+    const at = rel ?? t;
+    c.line = line; c.lineId = key; c.t = at; c.pos = at; c.level = line ? line.level + 1 : 0; c.chainPos = at;
     const rnd = (salt) => hash(seed, key, salt);
     const sgn = mirror ? -1 : 1;
     const M = mirror ? (v) => { const k = 2 * dot(v, radial); return [v[0] - radial[0] * k, v[1] - radial[1] * k, v[2] - radial[2] * k]; } : (v) => v;
@@ -32,7 +38,8 @@ function emitter(ev, dn, q, out) {
     const a = (tilt ?? q.tilt(c)) * DEG;
     const d = a ? norm(rotate(axis, side, a)) : axis;
     // A line's own X lies level and to the right of where it heads (Z), so leaves sit flat side by side.
-    const level = identity ? null : cross([0, 1, 0], d);
+    const levelW = identity ? null : cross([0, 1, 0], d);
+    const level = identity ? null : alignWith && line ? side : levelW;
     const flat = level && Math.hypot(...level) > 1e-3 ? norm(level) : side;
     const up0 = identity ? r0 : align < 1 ? rotate(flat, d, (1 - align) * (rnd(2) - 0.5) * Math.PI * 2) : flat;
     // Transform: each value read per entity, so its variation and curve apply. Its axes are the gizmo's
@@ -43,7 +50,7 @@ function emitter(ev, dn, q, out) {
     // Worked out on the first side of a pair, then mirrored, so both sides move like wings.
     let dP = M(d); let uP = M(up0);
     // The entity's X: its own, except straight up or down, where it lines up with the world's around it.
-    let xP = level && Math.hypot(...level) > 1e-3 ? uP : M(r0);
+    let xP = (alignWith && line) || (levelW && Math.hypot(...levelW) > 1e-3) ? uP : M(r0);
     const ownFrame = (z, x) => { const xs = norm(add(x, mul(z, -dot(x, z)))); return [xs, norm(cross(z, xs)), z]; };
     const F0 = localXf ? ownFrame(dP, xP) : ZUP;
     // A copy of a Mesh turns in its own shape (xf below); a line turns the way it leaves.
@@ -59,9 +66,11 @@ function emitter(ev, dn, q, out) {
     const off = M([0, 1, 2].map((i) => F[0][i] * o[0] + F[1][i] * o[1] + F[2][i] * o[2]));
     const pos = [p[0] + off[0], p[1] + off[1], p[2] + off[2]];
     if (ov?.t) for (let i = 0; i < 3; i++) pos[i] += ov.t[i];
-    const scale = Math.max(0, (q.scale(c) / 100) * u) * sizeK;
+    // Follow parent scale: the parent line's own size carries over, by the share asked.
+    const inherit = line ? 1 + ((line.sizeScale ?? 1) - 1) * follow : 1;
+    const scale = Math.max(0, (q.scale(c) / 100) * u) * sizeK * inherit;
     out.push({
-      p: pos, d: M(dP), up: M(uP), parent: line, s, pos: t, level: c.level, lengthScale: scale, scale,
+      p: pos, d: M(dP), up: M(uP), parent: line, s, pos: at, rel, level: c.level, lengthScale: scale, scale,
       xf: identity ? shapeXf(rot, axes) : null,
       axisScale: !identity && axes.some((a) => a !== 1) ? { k: axes, f: F.map(M) } : null,
       angleDiv: a / DEG, angleBend: 0, offset: 0, distance: 0, key,
@@ -135,7 +144,8 @@ function ringMode(ev, dn, q, f, emit, seed) {
     } else {
       k = 1;
       a = random ? hash(seed, key, 8) * Math.PI * 2 : (i / n) * Math.PI * 2;
-      t = a / (Math.PI * 2);
+      // First to last round the ring, so the last one reads the end of a curve.
+      t = random ? a / (Math.PI * 2) : n > 1 ? i / (n - 1) : 0;
     }
     ev.ctx.t = t; ev.ctx.pos = t; ev.ctx.lineId = key;
     const R = q.ringRadius(ev.ctx) * k;
@@ -153,9 +163,10 @@ function urchinMode(ev, dn, q, f, emit, seed) {
     const key = keyOf(f, i);
     const u = (i + 0.5) / n;
     const t = st + (en - st) * u;
-    const y = t * 2 - 1; const rr = Math.sqrt(Math.max(0, 1 - y * y));
+    const y = t * 2 - 1;
+    // Its curves run from the first (Start) to the last (End).
+    ev.ctx.t = n > 1 ? i / (n - 1) : 0; ev.ctx.pos = ev.ctx.t; ev.ctx.lineId = key; const rr = Math.sqrt(Math.max(0, 1 - y * y));
     const a = i * GOLDEN;
-    ev.ctx.t = t; ev.ctx.pos = t; ev.ctx.lineId = key;
     const R = q.sproutRadius(ev.ctx); const H = q.sproutHeight(ev.ctx);
     const radial = around(f, a);
     const p = add(add(f.p, mul(radial, rr * R)), mul(f.T, ((y + 1) / 2) * H));
@@ -163,7 +174,7 @@ function urchinMode(ev, dn, q, f, emit, seed) {
     const axis = mode === 'axis' ? f.T : mode === 'orthogonal' ? radial : nrm;
     // Tilting needs a direction square to the axis, which the ball's poles don't supply by themselves.
     const side = Math.abs(dot(axis, f.T)) < 0.98 ? f.T : radial;
-    emit({ p, axis, radial: norm(add(side, mul(axis, -dot(side, axis)))), t, key, line: f.line, s: f.s });
+    emit({ p, axis, radial: norm(add(side, mul(axis, -dot(side, axis)))), t, rel: n > 1 ? i / (n - 1) : 0, key, line: f.line, s: f.s });
   }
 }
 
@@ -181,7 +192,8 @@ function splineMode(ev, dn, q, parents, emit, seed) {
     // Start and end can vary per parent line, and follow a curve up the chain.
     const start = clamp(q.start(c) / 100, 0, 1); const end = clamp(q.end(c) / 100, 0, 1);
     const span = (end - start) * L;
-    const n = span > 0 ? Math.round(((curved ? baseDensity : q.density(c)) * span) / ev.unit) : 0;
+    const byCount = P.amountBy === 'count';
+    const n = span <= 0 ? 0 : byCount ? Math.max(0, Math.round(q.splineCount ? q.splineCount(c) : +P.splineCount || 0)) : Math.round(((curved ? baseDensity : q.density(c)) * span) / ev.unit);
     // Opposite and alternate kinds start level, out to the line's sides; spirals and whorls start anywhere.
     const sided = P.pattern === 'alternate' || P.pattern === 'pairs' || P.pattern === 'alternate pairs';
     const phi0 = sided ? 0 : hash(seed, line.id, 2) * Math.PI * 2;
@@ -200,11 +212,13 @@ function splineMode(ev, dn, q, parents, emit, seed) {
       if (s > line.length + 1e-4) return;
       const t = tOf(line, s);
       const key = (key0 + i * 31) | 0;
-      c.line = line; c.t = t; c.pos = t; c.lineId = key;
-      if (curved && hash(seed, key, 5) > q.density(c) / baseDensity) return;
+      // Curves on this placement run from Start (0) to End (1), not over the whole parent.
+      const rel = clamp((s - start * L) / span, 0, 1);
+      c.line = line; c.t = rel; c.pos = rel; c.lineId = key;
+      if (curved && !byCount && hash(seed, key, 5) > q.density(c) / baseDensity) return;
       sampleLine(line, s, S);
       const f = { U: [S.ux, S.uy, S.uz], V: [S.vx, S.vy, S.vz] };
-      emit({ p: [S.px, S.py, S.pz], axis: [S.tx, S.ty, S.tz], radial: around(f, a), t, key, line, s, mirror: !!mirror });
+      emit({ p: [S.px, S.py, S.pz], axis: [S.tx, S.ty, S.tz], radial: around(f, a), t, rel, key, line, s, mirror: !!mirror });
     });
     // Without this a line just stops, which reads as a cut branch.
     if (P.tipOn && !line.cut) {
@@ -251,10 +265,14 @@ function meshMode(ev, dn, q, emit, seed, parents) {
   const minCos = Math.cos(clamp(+P.slope, 0, 180) * DEG);
   const even = P.spacing === 'even';
   const cell = Math.max(+P.minDist || 5, 0.01);
+  // The factor its curves read: bottom to top between Height from and to, or the order they are placed in.
+  const byOrder = P.meshFactor === 'order';
+  const up = (y, a, b) => (b > a ? clamp((y - a) / (b - a), 0, 1) : 0);
   // Placed points in the order given (faces, vertices, layers), with the same height, slope and prune limits.
   function fixedPoints(list) {
     const blo = shape.bounds[0][1]; const bhi = shape.bounds[1][1];
     const f0 = blo + (bhi - blo) * (+P.heightStart / 100); const f1 = blo + (bhi - blo) * (+P.heightEnd / 100);
+    const last = Math.max(1, list.length - 1);
     list.forEach((local, i) => {
       if (local.p[1] < f0 - 1e-3 || local.p[1] > f1 + 1e-3 || local.n[1] < minCos) return;
       const line = copies ? copies[i % copies.length] : null;
@@ -262,7 +280,7 @@ function meshMode(ev, dn, q, emit, seed, parents) {
       if (prune && softNoise(pt.p[0], pt.p[1], pt.p[2], +P.pruneScale || 50, seed) * 0.5 + 0.5 < prune) return;
       const axis = norm(mix3([0, 1, 0], norm(pt.n), follow));
       const k = (seed + i * 31 + 1) | 0;
-      emit({ p: pt.p, axis, radial: rotate(perpendicular(axis), axis, hash(seed, k, 9) * Math.PI * 2), t: bhi > blo ? (local.p[1] - blo) / (bhi - blo) : 0, key: k, line, s: 0, n: pt.n });
+      emit({ p: pt.p, axis, radial: rotate(perpendicular(axis), axis, hash(seed, k, 9) * Math.PI * 2), t: byOrder ? i / last : up(local.p[1], f0, f1), key: k, line, s: 0, n: pt.n });
     });
   }
   // Faces and vertices need the shape as triangles: a drawn primitive is baked into one.
@@ -306,7 +324,7 @@ function meshMode(ev, dn, q, emit, seed, parents) {
     const axis = norm(mix3([0, 1, 0], norm(pt.n), follow));
     const k = (seed + made * 31 + 1) | 0;
     const radial = rotate(perpendicular(axis), axis, hash(seed, k, 9) * Math.PI * 2);
-    emit({ p: pt.p, axis, radial, t: hi > lo ? (local.p[1] - lo) / (hi - lo) : made / Math.max(1, n - 1), key: k, line, s: 0, n: pt.n });
+    emit({ p: pt.p, axis, radial, t: byOrder ? made / Math.max(1, n - 1) : up(local.p[1], h0, h1), key: k, line, s: 0, n: pt.n });
     made++;
   }
 }
@@ -390,11 +408,16 @@ function sproutsMode(ev, dn, parents, emit) {
     // The points sit on the parent leaf as it is folded and curled, so children start on its surface.
     const level = Math.round(+dn.params.sproutLevel || 0);
     const spots = sproutFrames(ev, line);
-    spots.forEach((sp, i) => {
-      if (level && sp.level !== level) return;
+    const kept = spots.map((sp, i) => [sp, i]).filter(([sp]) => !level || sp.level === level);
+    // The factor its curves read: along the leaf, the order they were placed in, or from their middle outward.
+    const by = dn.params.sproutFactor || 'along';
+    const mid = [0, 1, 2].map((k) => kept.reduce((a, [sp]) => a + sp.p[k], 0) / Math.max(1, kept.length));
+    const far = kept.reduce((a, [sp]) => Math.max(a, Math.hypot(sp.p[0] - mid[0], sp.p[1] - mid[1], sp.p[2] - mid[2])), 0);
+    kept.forEach(([sp, i], j) => {
       found = true;
       const L = line.length;
-      emit({ p: sp.p, axis: sp.axis, radial: sp.normal, t: clamp(sp.t, 0, 1), key: (line.id * 4099 + i * 31) | 0, line, s: clamp(sp.t * L, 0, L) });
+      const f = by === 'order' ? j / Math.max(1, kept.length - 1) : by === 'outward' ? (far > 0 ? Math.hypot(sp.p[0] - mid[0], sp.p[1] - mid[1], sp.p[2] - mid[2]) / far : 0) : clamp(sp.t, 0, 1);
+      emit({ p: sp.p, axis: sp.axis, radial: sp.normal, t: clamp(sp.t, 0, 1), rel: f, key: (line.id * 4099 + i * 31) | 0, line, s: clamp(sp.t * L, 0, L) });
     });
   }
   if (!found) ev.warnings.add('Sprout placement needs a parent cutout leaf with sprout points. Add them with the Sprout tool in the cutout editor.');

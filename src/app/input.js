@@ -205,8 +205,11 @@ export function attachInput(stage, graph, view, ui) {
     if (zone === 'var') {
       const write = (v, draft) => setRowValue(node, owner, 'vary', { ...owner.vary, [param.k]: v }, { draft });
       const edit = () => ui.edit.vary(p, node, owner, param);
-      const range = { min: 0, max: param.abs || 100, int: !param.abs || param.abs > 2 };
-      if (graph.varBox) return scrubBy(p, +owner.vary?.[param.k] || 0, range, write, () => ui.edit.number(p, `${param.l}: ±`, +owner.vary?.[param.k] || 0, range, write));
+      const abs = (owner.varyMode?.[param.k] ?? (param.abs ? 'abs' : 'pct')) === 'abs';
+      const max = abs ? param.abs || Math.max(10, Math.abs(+owner[param.k] || 0) * 2, +param.max || 0) : 100;
+      const range = { min: 0, max, int: !abs || max > 20 };
+      // In its own box: drag to change, tap for the slider with Percent and Absolute.
+      if (graph.varBox) return scrubBy(p, +owner.vary?.[param.k] || 0, range, write, edit);
       edit();
       return true;
     }
@@ -390,9 +393,19 @@ export function attachInput(stage, graph, view, ui) {
       // No graph tooltips while the opaque tree is in the way, since a click there picks the tree.
       const blocked = state.layout === 'tree' || (state.layout === 'overlay' && state.focus === 'tree') || (state.layout === 'split' && inRect(view.rect, m))
         || (state.layout === 'overlay' && !e.shiftKey && view.isOnTree(m.x, m.y));
-      ui.hoverTip(blocked ? null : describeHit(graph.hit(m.x, m.y)), m);
+      const hit = blocked ? null : graph.hit(m.x, m.y);
+      ui.hoverTip(hit ? describeHit(hit) : null, m);
+      // Hover to open (Settings, Navigation): resting on a node's tab opens it.
+      const wait = ui.hoverOpen?.();
+      const key = hit?.part === 'tab' ? `${hit.node.id}:${hit.tab}` : '';
+      if (key !== hoverTabKey) {
+        hoverTabKey = key;
+        clearTimeout(hoverTabTimer);
+        if (key && wait != null && hit.node.tab !== hit.tab) hoverTabTimer = setTimeout(() => { hit.node.tab = hit.tab; changed({ layout: true, rebuild: false }); }, wait * 1000);
+      }
     });
   }
+  let hoverTabKey = ''; let hoverTabTimer = 0;
 
   // ---- Release ----
   function finish(e) {
@@ -496,25 +509,28 @@ export function attachInput(stage, graph, view, ui) {
   addEventListener('keydown', (e) => {
     if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName || '')) return;
     if (ui.modalOpen()) return;
-    const k = e.key.toLowerCase();
-    const mod = e.ctrlKey || e.metaKey;
-    if (mod && k === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
-    if (mod && k === 'y') { e.preventDefault(); redo(); return; }
-    if (mod && k === 's') { e.preventDefault(); ui.save(); return; }
-    if (mod && k === 'g') { e.preventDefault(); groupSelected(); return; }
-    if (mod && k === 'a') { e.preventDefault(); select(doc.graph.nodes.map((n) => n.id)); graph.invalidate(); return; }
-    if (mod && k === 'd') { e.preventDefault(); const ids = duplicate([...doc.sel]); select(ids); changed({ layout: true }); commit(); return; }
-    if (mod && k === 'c') { copy(); return; }
-    if (mod && k === 'v') { paste(); return; }
-    if (mod) return;
-    if (k === 'f') { frameUnderMouse(); e.preventDefault(); }
-    else if (k === 'delete' || k === 'backspace' || k === 'x') { if (!(ui.gizmo?.on && ui.gizmo.removePicked())) removeSelection(); }
-    else if (k === 'h') { for (const n of selected()) n.on = n.on === false; changed(); commit(); }
-    else if (k === ' ') { e.preventDefault(); ui.addMenu(state.mouse); }
-    else if (k === 'tab') { e.preventDefault(); ui.cycleLayout(); }
-    else if (k === 'l') { ui.setMode(view.mode === 'mesh' ? 'lines' : 'mesh'); }
-    else if (ui.gizmo?.on && 'qwer'.includes(k)) ui.xfMode({ q: 'all', w: 'translate', e: 'rotate', r: 'scale' }[k]);
-    else if (k === 'escape') { if (state.draw) stopDraw(); else select([]); graph.invalidate(); }
+    const id = ui.commandFor(e);
+    if (!id) return;
+    const xf = { xfAll: 'all', xfMove: 'translate', xfRotate: 'rotate', xfScale: 'scale' }[id];
+    if (xf && !ui.gizmo?.on) return;
+    const run = {
+      undo, redo,
+      save: () => ui.save(),
+      group: groupSelected,
+      selectAll: () => { select(doc.graph.nodes.map((n) => n.id)); graph.invalidate(); },
+      duplicate: () => { const ids = duplicate([...doc.sel]); select(ids); changed({ layout: true }); commit(); },
+      copy, paste,
+      frame: frameUnderMouse,
+      remove: () => { if (!(ui.gizmo?.on && ui.gizmo.removePicked())) removeSelection(); },
+      toggleNode: () => { for (const n of selected()) n.on = n.on === false; changed(); commit(); },
+      addNode: () => ui.addMenu(state.mouse),
+      cycleLayout: () => ui.cycleLayout(),
+      lines: () => ui.setMode(view.mode === 'mesh' ? 'lines' : 'mesh'),
+      escape: () => { if (state.draw) stopDraw(); else select([]); graph.invalidate(); },
+    }[id] || (xf ? () => ui.xfMode(xf) : () => ui.run(id));
+    // Copy with nothing picked leaves the browser's own copy alone.
+    if (id !== 'copy' && id !== 'paste') e.preventDefault();
+    run();
   });
 
   function frameUnderMouse() {

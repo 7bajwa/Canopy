@@ -142,6 +142,29 @@ export class TexturePacker {
     root.querySelector('[data-close]').addEventListener('click', () => this.close());
     root.querySelector('[data-pack]').addEventListener('click', () => this.packAndSave());
     root.querySelector('[data-pack]').before(snapBar('pack', ['move', 'turn', 'scale']));
+    // Drag the window by its top bar (not its controls); the place is kept for the session.
+    const card = root.querySelector('.pack-card'); const top = root.querySelector('.pack-top');
+    let grab = null; let at = [0, 0];
+    top.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button, label, input, select, .atlas-tools')) return;
+      grab = [e.clientX, e.clientY, ...at]; top.setPointerCapture(e.pointerId);
+    });
+    top.addEventListener('pointermove', (e) => {
+      if (!grab) return;
+      const ui = parseFloat(getComputedStyle(root).zoom) || 1;
+      place([grab[2] + (e.clientX - grab[0]) / ui, grab[3] + (e.clientY - grab[1]) / ui]);
+    });
+    top.addEventListener('pointerup', () => { grab = null; });
+    // Kept on screen: its top bar never leaves the window, also when the window or tablet turns.
+    const place = (xy) => {
+      const ui = parseFloat(getComputedStyle(root).zoom) || 1;
+      const W = innerWidth / ui; const H = innerHeight / ui; const w = card.offsetWidth; const h = card.offsetHeight;
+      const mx = Math.max(0, (W - w) / 2); const my = Math.max(0, (H - h) / 2);
+      at = [Math.min(mx, Math.max(-mx, xy[0])), Math.min(my, Math.max(-my, xy[1]))];
+      card.style.transform = `translate(${at[0]}px, ${at[1]}px)`;
+    };
+    addEventListener('resize', () => place(at));
+    this.placeCard = () => place(at);
     // A new sheet size reshapes the sheet and lays the pieces out again to fit it.
     this.side.addEventListener('change', async () => {
       if (this.aspect === this.shownAspect) return;
@@ -197,6 +220,7 @@ export class TexturePacker {
 
   async open() {
     this.root.hidden = false;
+    this.placeCard();
     const s = this.state;
     for (const [k, [box, d]] of Object.entries(this.boxes)) box.checked = s[k] ?? d;
     s.mats ||= this.candidates.map((m) => m.id);

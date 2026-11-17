@@ -19,6 +19,8 @@ function split(n) {
     part[p.k] = n.params[p.k];
     const vary = n.params.vary?.[p.k];
     if (vary) (part.vary ||= {})[p.k] = vary;
+    const mode = n.params.varyMode?.[p.k];
+    if (mode) (part.varyMode ||= {})[p.k] = mode;
     for (const [key, curve] of Object.entries(n.params.curves || {})) {
       if (key === p.k || key.startsWith(`${p.k}@`)) (part.curves ||= {})[key] = curve;
     }

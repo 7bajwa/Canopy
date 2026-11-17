@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { setUnits, showLength, parseLength, rulerMarks } from '../src/app/units.js';
-import { stamp, makeBackups } from '../src/app/backup.js';
+import { stamp, makeBackups, backupName } from '../src/app/backup.js';
 import { figureFor } from '../src/app/scalefig.js';
 
 test('lengths read in the system that is on, and the stored centimeters never change', () => {
@@ -43,31 +43,51 @@ test('a ruler marks every 10 cm to 2 m, every metre to 10 m, then every 5 m', ()
 });
 
 test('the figure beside a plant grows with the plant', () => {
-  assert.equal(figureFor(30), 'baby');
-  assert.equal(figureFor(120), 'boy');
-  assert.equal(figureFor(640), 'man');
-  assert.equal(figureFor(2500), 'man');
+  assert.equal(figureFor(30).id, 'squirrel');
+  assert.equal(figureFor(120).id, 'boy');
+  assert.equal(figureFor(300).id, 'man');
+  assert.equal(figureFor(640).id, 'giraffe');
+  assert.equal(figureFor(2500).id, 'sauroposeidon');
+  assert.equal(figureFor(2500, { sauroposeidon: false, giraffe: false }).id, 'man', 'only the figures picked in Settings show');
 });
 
 test('backups only save when something changed, and carry the date and time', async () => {
-  assert.equal(stamp(new Date(2026, 10, 7, 9, 5, 3)), '2026-11-07 09-05-03');
+  assert.equal(stamp(new Date(2026, 10, 7, 9, 5, 3)), '261107_0905');
+  assert.equal(backupName(false, 'Oak', '261107_0905'), 'Canopy-261107_0905.canopy');
+  assert.equal(backupName(true, 'Oak', '261107_0905'), 'Oak_261107_0905.canopy');
   const saved = [];
   let text = 'a';
-  const b = makeBackups({ text: () => text, name: () => 'Tree', download: (n, t) => saved.push([n, t]), toast() {}, app: null });
-  assert.equal(await b.start(5), true);
-  assert.equal(saved[0][0], 'Tree.canopy');
+  const b = makeBackups({ text: () => text, write: async (when, t) => saved.push([when, t]), toast() {} });
+  b.start(5);
+  assert.equal(b.running(), true);
+  await b.tick();
+  assert.equal(saved.length, 1);
   await b.tick();
   assert.equal(saved.length, 1, 'nothing changed, so no new file');
   text = 'b';
   await b.tick();
   assert.equal(saved.length, 2);
-  assert.match(saved[1][0], /^Tree \d{4}-\d\d-\d\d \d\d-\d\d-\d\d\.canopy$/);
   b.stop();
   assert.equal(b.running(), false);
 });
 
-test('closing the save dialog leaves backups off', async () => {
-  const b = makeBackups({ text: () => 'a', name: () => 'Tree', download() {}, toast() {}, app: { saveAs: async () => false } });
-  assert.equal(await b.start(5), false);
-  assert.equal(b.running(), false);
+test('a backup that was declined is tried again next time', async () => {
+  let n = 0;
+  const b = makeBackups({ text: () => 'a', write: async () => (n++ ? true : false), toast() {} });
+  await b.tick(); await b.tick();
+  assert.equal(n, 2);
+});
+
+test('metres, millimetres and inch fractions read and type back', () => {
+  setUnits('metric', 'm');
+  assert.equal(showLength(180), '1.8 m');
+  assert.equal(parseLength('2'), 200, 'a bare number is in the unit that is on');
+  setUnits('metric', 'mm');
+  assert.equal(showLength(1.5), '15 mm');
+  setUnits('imperial', 'frac');
+  assert.equal(showLength(2.54 * 3.5), '3 1/2"');
+  assert.equal(showLength(2.54 * 70.75), "5' 10 3/4\"");
+  assert.ok(Math.abs(parseLength('5 1/2"') - 2.54 * 5.5) < 1e-9);
+  assert.ok(Math.abs(parseLength("5' 1/2") - 2.54 * 60.5) < 1e-9);
+  setUnits('metric');
 });

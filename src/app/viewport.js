@@ -325,10 +325,11 @@ export class Viewport {
     this.meshes.forEach((m, i) => m.geometry.setAttribute('aAo', new THREE.BufferAttribute(baked[i], 1)));
   }
 
-  setScale(show, units) {
+  setScale(show, units, figures = this.figures) {
     this.scaleShow = show;
     this.units = units;
-    this.scale.update(this.box, show, units);
+    this.figures = figures || {};
+    this.scale.update(this.box, show, units, this.figures);
     this.scale.place(this.camera);
     this.invalidate();
   }
@@ -652,7 +653,7 @@ export class Viewport {
       this.placeSun(box);
     }
     if (this.shading === 'gray') this.bakeAo();
-    this.scale.update(this.box, this.scaleShow, this.units);
+    this.scale.update(this.box, this.scaleShow, this.units, this.figures);
     this.scale.place(this.camera);
     this.highlight();
     if (this.shading === 'wiremesh') this.updateWire();
@@ -940,7 +941,7 @@ export class Viewport {
     for (const o of hidden) o.visible = false;
     this.preview.visible = false;
     this.scale.group.visible = false;
-    if (opts.figure) this.scale.update(this.box, opts.figure, this.units);
+    if (opts.figure) this.scale.update(this.box, opts.figure, this.units, this.figures);
     if (opts.ground === false) { this.ground.visible = false; this.floor.visible = false; }
     if (opts.grid === false && this.floor.visible) { const g = this.groundLook || {}; this.floor.material.map = groundTexture(g.color || '#3a4a30', this.floor.scale.x, false); this.floor.material.needsUpdate = true; }
     if (opts.bg) this.renderer.setClearColor(opts.bg, 1);
@@ -970,7 +971,7 @@ export class Viewport {
     this.ground.visible = keep.ground; this.floor.visible = keep.floor;
     this.renderer.setClearColor(keep.clear, keep.alpha);
     doc.sel = keep.sel;
-    this.scale.update(this.box, this.scaleShow, this.units);
+    this.scale.update(this.box, this.scaleShow, this.units, this.figures);
     this.rect = keep.rect;
     this.bias = keep.bias; this.biasY = keep.biasY;
     this.orbit.target.copy(keep.target);

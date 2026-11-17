@@ -23,7 +23,7 @@ test('Curl turns the line round on itself, tighter toward the tip', () => {
   const mid = pt(tight, Math.floor(tight.n / 2));
   // Tightened, the first half stays straighter: its middle is still high up.
   assert.ok(mid[1] > 80, `tightening keeps the base straighter (mid at ${mid[1].toFixed(1)})`);
-  const world = lineOf(node('Spline', { ...bare, mods: [mod('Dir_Curl', { turns: 0.25, tighten: 0, axis: 'x' })] }));
+  const world = lineOf(node('Spline', { ...bare, mods: [mod('Dir_Curl', { turns: 0.25, tighten: 0, axis: 'x', space: 'world' })] }));
   assert.ok(Math.abs(last(world)[0]) < 1e-3, 'around world X it stays in the plane across X');
 });
 
@@ -108,13 +108,22 @@ test('Warp Shape B bends the line in Z, across Shape A', () => {
   assert.ok(Math.abs(dotAB) < 1, 'and across the way Shape A bends it');
 });
 
-test('Avoid push turns a line away from one in its way', () => {
+test('Avoid bend turns a line away from one in its way, in a smooth curve', () => {
   const wall = node('Spline', { ...bare, length: 200, place: 'line', lineDir: [0, 0, 1], count: 20, lineLen: 200, posX: 60, xfSpace: 'world' });
   const reach = (mods) => node('Spline', { ...bare, length: 200, rotY: 90, xfSpace: 'world', posZ: 100, mods });
   const crossed = (sp) => { const l = evalOf([wall, sp]).ev.lines.find((x) => x.node.id === `${sp.id}#path`); return Math.max(...Array.from({ length: l.n }, (_, i) => l.pts[i * 3])); };
   assert.ok(crossed(reach([])) > 150);
-  assert.ok(crossed(reach([mod('Dir_Avoid', { mode: 'push', clearance: 6, baseSkip: 0 })])) < 60, 'it turns back before the wall');
-  assert.ok(crossed(reach([mod('Dir_Avoid', { mode: 'push', with: 'same node', clearance: 6, baseSkip: 0 })])) > 150, 'Against same node ignores the other node');
+  assert.ok(crossed(reach([mod('Dir_Avoid', { mode: 'bend', radius: 4, clearance: 6, baseSkip: 0 })])) < 60, 'it turns back before the wall');
+  assert.ok(crossed(reach([mod('Dir_Avoid', { mode: 'bend', with: 'same node', clearance: 6, baseSkip: 0 })])) > 150, 'Against same node ignores the other node');
+  // No step turns more than an arc of Bend radius allows.
+  const l = evalOf([wall, reach([mod('Dir_Avoid', { mode: 'bend', radius: 25, clearance: 6, baseSkip: 0 })])]).ev.lines.find((x) => x.node.id.endsWith('#path') && x.node.id !== `${wall.id}#path`);
+  let worst = 0;
+  for (let i = 2; i < l.n; i++) {
+    const a = [0, 1, 2].map((k) => l.pts[(i - 1) * 3 + k] - l.pts[(i - 2) * 3 + k]); const b = [0, 1, 2].map((k) => l.pts[i * 3 + k] - l.pts[(i - 1) * 3 + k]);
+    const ang = Math.acos(Math.min(1, (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (Math.hypot(...a) * Math.hypot(...b) || 1))) / (Math.hypot(...a) || 1);
+    worst = Math.max(worst, ang);
+  }
+  assert.ok(worst <= 1 / 25 + 1e-3, `turns at most 1/radius per cm (got ${worst.toFixed(3)})`);
 });
 
 test('Collide follows a mesh copy moved with the gizmo', () => {
@@ -145,4 +154,28 @@ test('Deviation kinks the parent toward each child, more with a wider angle', ()
   const small = push(10); const big = push(30);
   assert.ok(small > 0.5, `toward the child (${small.toFixed(2)})`);
   assert.ok(big > small * 1.5, `a wider angle kinks more (${small.toFixed(2)} vs ${big.toFixed(2)})`);
+});
+
+test('a modifier works between its Start and End only, and the rest follows on', () => {
+  const full = lineOf(node('Spline', { ...bare, steps: 2, mods: [mod('Dir_Radial', { angle: 90, smoothing: 50 })] }));
+  const part = lineOf(node('Spline', { ...bare, steps: 2, mods: [mod('Dir_Radial', { angle: 90, smoothing: 50, from: 50, to: 75 })] }));
+  const at = (l, s) => { let i = 0; while (i < l.n - 1 && l.len[i] < s) i++; return pt(l, i); };
+  const mid = at(part, 98);
+  assert.ok(Math.abs(mid[0]) < 1e-3 && Math.abs(mid[2]) < 1e-3, 'before Start it stays straight');
+  assert.ok(Math.abs(part.length - 200) < 2, `it keeps its length (got ${part.length.toFixed(1)})`);
+  // Past End it goes straight on in the new direction.
+  const a = at(part, 160); const b = at(part, 199); const c = at(part, 180);
+  const d1 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]]; const d2 = [b[0] - c[0], b[1] - c[1], b[2] - c[2]];
+  const cos = (d1[0] * d2[0] + d1[1] * d2[1] + d1[2] * d2[2]) / (Math.hypot(...d1) * Math.hypot(...d2));
+  assert.ok(cos > 0.999, 'past End it carries straight on');
+  assert.ok(Math.hypot(...last(full).map((v, i) => v - last(part)[i])) > 10, 'and it differs from the whole-line one');
+});
+
+test('modifier orientation follows the own frame of each line, so lines round a ring bend alike', () => {
+  const sp = node('Spline', { ...bare, place: 'ring', count: 4, ringRadius: 50, mods: [mod('Dir_Radial', { angle: 60, smoothing: 100, orient: 0 })] });
+  const ls = evalOf([sp]).ev.lines.filter((l) => l.node.id === `${sp.id}#path`);
+  // Each tip's sideways offset, measured against the way out from the ring's middle to its base.
+  const outward = ls.map((l) => { const b = pt(l, 0); const e = last(l); const r = Math.hypot(b[0], b[2]); return ((e[0] - b[0]) * b[0] + (e[2] - b[2]) * b[2]) / r; });
+  assert.ok(Math.abs(Math.hypot(...last(ls[0]).map((v, i) => v - pt(ls[0], 0)[i])) - 200) > 1, 'it bends');
+  assert.ok(Math.max(...outward) - Math.min(...outward) < 0.5, `every line bends the same way round (got ${outward.map((v) => v.toFixed(1))})`);
 });

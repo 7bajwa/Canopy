@@ -42,6 +42,47 @@ function turnToward(d, target, amount) {
   return [[ax[0] / l, ax[1] / l, ax[2] / l], Math.min(angle, amount)];
 }
 
+// Runs a modifier on the stretch of the line between a and b (shares of its length) only. That stretch is cut out
+// as a line of its own (so the modifier's curves run from its Start to its End, and its frame carries on from the
+// line's), changed, and put back; the rest beyond End follows rigidly, turned as the stretch's end was turned.
+export function inRange(ev, fn, m, line, a, b) {
+  const L = line.length; const s0 = a * L; const s1 = b * L;
+  if (s1 - s0 < 1e-3) return;
+  const at = (s) => { const o = sampleLine(line, s, newSample()); return { p: [o.px, o.py, o.pz], u: [o.ux, o.uy, o.uz], t: [o.tx, o.ty, o.tz] }; };
+  const A = at(s0); const B = at(s1);
+  const { pts, len: ls, n } = line;
+  const head = []; const mid = [...A.p]; const tail = [];
+  for (let i = 0; i < n; i++) {
+    const p = [pts[i * 3], pts[i * 3 + 1], pts[i * 3 + 2]];
+    if (ls[i] < s0 - 1e-4) head.push(...p);
+    else if (ls[i] > s0 + 1e-4 && ls[i] < s1 - 1e-4) mid.push(...p);
+    else if (ls[i] > s1 + 1e-4) tail.push(...p);
+  }
+  mid.push(...B.p);
+  const part = { ...line, pts: new Float32Array(mid), upHint: A.u, startDir: A.t, U: null };
+  finishLine(part);
+  const k = part.n - 1;
+  const dO = norm([mid[k * 3] - mid[k * 3 - 3], mid[k * 3 + 1] - mid[k * 3 - 2], mid[k * 3 + 2] - mid[k * 3 - 1]]);
+  fn(ev, m, part, ev.q(m));
+  if (part.dead) { line.dead = true; return; }
+  finishLine(part);
+  const P = part.pts; const e = part.n - 1;
+  // Its start stays where it was, even if the modifier moved it.
+  const off = [A.p[0] - P[0], A.p[1] - P[1], A.p[2] - P[2]];
+  for (let i = 0; i < P.length; i += 3) { P[i] += off[0]; P[i + 1] += off[1]; P[i + 2] += off[2]; }
+  const E = [P[e * 3], P[e * 3 + 1], P[e * 3 + 2]];
+  const dM = e > 0 ? norm([P[e * 3] - P[e * 3 - 3], P[e * 3 + 1] - P[e * 3 - 2], P[e * 3 + 2] - P[e * 3 - 1]]) : dO;
+  const ax = cross(dO, dM); const sin = len(ax); const ang = Math.atan2(sin, dot(dO, dM));
+  const turn = (v) => (sin > 1e-9 ? rotate(v, mul(ax, 1 / sin), ang) : v);
+  const out = [...head, ...P];
+  for (let i = 0; i < tail.length; i += 3) {
+    const r = turn([tail[i] - B.p[0], tail[i + 1] - B.p[1], tail[i + 2] - B.p[2]]);
+    out.push(E[0] + r[0], E[1] + r[1], E[2] + r[2]);
+  }
+  for (const key of ['roll', 'align', 'cut']) if (part[key] !== line[key]) line[key] = part[key];
+  line.pts = new Float32Array(out);
+}
+
 // Every cut keeps the line's nominal length, so the thickness at the cut stays as it was (a chopped branch, a
 // sliced leaf) instead of tapering to a point; what grew beyond it is gone with the points.
 export function cutAt(line, s, keepLength, capEnd) {
@@ -113,6 +154,22 @@ export function collideTarget(mode, d, n, gap = 0) {
 const pickAngle =(ev, node, q, line, salt) => hash(ev.h(node), line.id, salt);
 // World axes as the gizmo names them (Z up).
 const GIZMO_AXES = { x: [1, 0, 0], y: [0, 0, -1], z: [0, 1, 0] };
+// The same axes on the line's own frame where it starts: X its side, Z the way it heads, Y across both.
+function localAxes(line) {
+  ensureFrames(line);
+  const z = [line.T[0], line.T[1], line.T[2]]; const x = [line.U[0], line.U[1], line.U[2]];
+  return { x, y: norm(cross(z, x)), z };
+}
+const axisOf = (P, line) => (P.space === 'world' ? GIZMO_AXES[P.axis] : localAxes(line)[P.axis]) || null;
+// The line's own side at point i (its frame's X, which every entity has the same way round), square to the
+// heading d and turned by orient around it. Orientations then mean the same on every line.
+function sideAt(F, i, d, orient) {
+  let u = F ? [F[i * 3], F[i * 3 + 1], F[i * 3 + 2]] : perpendicular(d);
+  u = sub(u, mul(d, dot(u, d)));
+  if (len(u) < 1e-4) u = perpendicular(d);
+  return rotate(norm(u), d, orient);
+}
+const frameU = (line) => { ensureFrames(line); return line.U; };
 
 export const MODIFIERS = {
   Dir_Random(ev, node, line, q) {
@@ -120,12 +177,12 @@ export const MODIFIERS = {
     const r = pickAngle(ev, node, q, line, 1);
     const axisDir = pickAngle(ev, node, q, line, 2) * Math.PI * 2;
     const smoothing = Math.max(0.1, q.smoothing(c));
-    let axis = null;
+    let axis = null; const F = frameU(line);
     walk(line, (i, s, t, d, p, seg) => {
       if (s >= smoothing) return null;
       c.t = t;
       const total = (q.min(c) + (q.max(c) - q.min(c)) * r) * DEG;
-      if (!axis) axis = rotate(perpendicular(d), d, axisDir);
+      if (!axis) axis = sideAt(F, i, d, axisDir);
       return [axis, total * seg / smoothing];
     });
   },
@@ -222,7 +279,7 @@ export const MODIFIERS = {
     const scale = q.scale(c) * (1 - (q.scaleChaos(c) / 100) * hash(seed, line.id, 1));
     const orient = (q.orient(c) + q.orientChaos(c) * (hash(seed, line.id, 2) * 2 - 1)) * DEG;
     const dir = line.startDir;
-    const side = rotate(perpendicular(dir), dir, orient);
+    const side = sideAt(frameU(line), 0, dir, orient);
     const side2 = norm(cross(dir, side));
     const p0 = [line.pts[0], line.pts[1], line.pts[2]];
     const a0 = sampleCurve(a, 0); const b0 = sampleCurve(b, 0);
@@ -247,14 +304,14 @@ export const MODIFIERS = {
     const L = line.length;
     const sm = Math.min(Math.max(0, q.smooth ? q.smooth(c) : 0), L);
     const a0 = sm > 0 ? clamp(pos - sm / 2, 0, L - sm) : pos; const a1 = a0 + sm;
-    let done = false; let axis = null;
+    let done = false; let axis = null; const F = frameU(line);
     walk(line, (i, s, t, d, p, seg) => {
       if (sm > 0) {
         const over = Math.min(s + seg, a1) - Math.max(s, a0);
-        if (over > 0) { axis ||= rotate(perpendicular(d), d, orient); done = true; return [axis, angle * over / sm]; }
+        if (over > 0) { axis ||= sideAt(F, i, d, orient); done = true; return [axis, angle * over / sm]; }
       } else if (!done && s + seg >= pos) {
         done = true;
-        return [rotate(perpendicular(d), d, orient), angle];
+        return [sideAt(F, i, d, orient), angle];
       }
       if (done && applyStr) return turnToward(d, applyV, applyStr * seg / ev.unit);
       return null;
@@ -286,10 +343,10 @@ export const MODIFIERS = {
     const tight = clamp(q.tighten(c) / 100, 0, 1) * 0.9;
     const W = tight > 0 ? -Math.log(1 - tight) / tight : 1;
     const orient = (q.orient(c) + q.orientChaos(c) * (hash(ev.h(node), line.id, 1) * 2 - 1)) * DEG;
-    let axis = GIZMO_AXES[P.axis] || null;
+    let axis = axisOf(P, line); const F = frameU(line);
     walk(line, (i, s, t, d, p, seg) => {
       c.t = t;
-      axis ||= rotate(perpendicular(d), d, orient);
+      axis ||= sideAt(F, i, d, orient);
       return [axis, q.turns(c) * Math.PI * 2 * (seg / L) / (W * (1 - tight * t))];
     });
   },
@@ -324,11 +381,11 @@ export const MODIFIERS = {
     const c = ev.setCtx(line, 0);
     const orient = q.orient(c) * DEG;
     const smoothing = Math.max(0.1, q.smoothing(c));
-    let axis = null;
+    let axis = null; const F = frameU(line);
     // The whole length bends, to the tip; its curve is the way to hold part of it straight.
     walk(line, (i, s, t, d, p, seg) => {
       c.t = t;
-      if (!axis) axis = rotate(perpendicular(d), d, orient);
+      if (!axis) axis = sideAt(F, i, d, orient);
       return [axis, q.angle(c) * DEG * seg / smoothing];
     });
   },
@@ -337,7 +394,7 @@ export const MODIFIERS = {
     const c = ev.setCtx(line, 0);
     ensureFrames(line);
     const turn = q.turn(c) * DEG;
-    const A = GIZMO_AXES[node.params.axis];
+    const A = axisOf(node.params, line);
     const e1 = A && perpendicular(A); const e2 = A && cross(A, e1);
     const out = line.pts.slice();
     for (let i = 0; i < line.n; i++) {
@@ -455,7 +512,7 @@ export const MODIFIERS = {
     const P = node.params;
     const c = ev.setCtx(line, 0);
     const D = Math.max(0.1, q.clearance(c)); const F = Math.max(0, +P.falloff || 0);
-    const R = D + (P.mode === 'push' ? F : 0);
+    const R = D + (P.mode === 'trim' || P.mode === 'prune' ? 0 : F);
     // Against: lines of this node, of the other nodes, or all of them; each choice keeps its own grid.
     const w = P.with === 'same node' || P.with === 'other nodes' ? P.with : 'everything';
     const grids = (ev.avoidGrids ||= new Map());
@@ -508,9 +565,52 @@ export const MODIFIERS = {
       }
       return;
     }
-    // Push: the line is regrown step by step and, where its next point would come near another line, turns away
+    if (P.mode === 'push') {
+      // Push: each point out to the clearance (by what it lacks, scaled by Amount), fading over the falloff; then
+      // smoothed along the line over Spread so it bends aside rather than kinking. Smoothing thins the push, so it
+      // runs again (up to four passes) until no point past the base is still inside the clearance.
+      const n = line.n; const push = new Float32Array(n * 3);
+      const spread = Math.max(0, +(P.spread ?? 20));
+      for (let pass = 0; pass < 4; pass++) {
+        push.fill(0);
+        let any = false; let inside = false;
+        for (let i = 1; i < n; i++) {
+          if (line.len[i] < skip) continue;
+          c.t = line.length > 0 ? line.len[i] / line.length : 0;
+          const h = nearest(pts[i * 3], pts[i * 3 + 1], pts[i * 3 + 2]);
+          if (!h) continue;
+          if (h[3] < D * 0.98) inside = true;
+          const lack = h[3] < D ? D - h[3] : F > 0 ? (1 - (h[3] - D) / F) * D * 0.15 : 0;
+          if (lack <= 0) continue;
+          const away = h[3] > 1e-6 ? norm([pts[i * 3] - h[0], pts[i * 3 + 1] - h[1], pts[i * 3 + 2] - h[2]]) : [line.ux?.[i] ?? 1, 0, 0];
+          const m = clamp(q.strength(c) / 100, 0, 1) * lack * (pass ? 1 : 1.15);
+          push[i * 3] = away[0] * m; push[i * 3 + 1] = away[1] * m; push[i * 3 + 2] = away[2] * m; any = true;
+        }
+        if (!any) break;
+        // Spread: each point takes the strongest push near it, faded by distance along the line, so the line bows
+        // out smoothly around a touch at full strength instead of averaging it away.
+        const out = new Float32Array(n * 3);
+        let lo = 1;
+        for (let i = 1; i < n; i++) {
+          while (line.len[i] - line.len[lo] > spread * 3) lo++;
+          let best = 0;
+          for (let k = lo; k < n && line.len[k] - line.len[i] <= spread * 3; k++) {
+            const g = spread > 0 ? Math.exp(-(((line.len[k] - line.len[i]) / spread) ** 2)) : k === i ? 1 : 0;
+            const mag = Math.hypot(push[k * 3], push[k * 3 + 1], push[k * 3 + 2]) * g;
+            if (mag > best) { best = mag; out[i * 3] = push[k * 3] * g; out[i * 3 + 1] = push[k * 3 + 1] * g; out[i * 3 + 2] = push[k * 3 + 2] * g; }
+          }
+        }
+        for (let i = 0; i < n * 3; i++) pts[i] += out[i];
+        finishLine(line);
+        if (!inside) break;
+      }
+      return;
+    }
+    // Bend: the line is regrown step by step and, where its next point would come near another line, turns away
     // from there on (mirrored off it when heading in), harder the closer it is; meeting another later, it turns
-    // away again. A long segment is checked at points along it, so it can't step through a line.
+    // away again. Each step turns at most as far as an arc of Bend radius allows, so it curves off instead of
+    // kinking. A long segment is checked at points along it, so it can't step through a line.
+    const radius = Math.max(1, +(P.radius ?? 25));
     walk(line, (i, s, t, d, p, seg) => {
       if (s < skip) return null;
       c.t = t;
@@ -527,7 +627,7 @@ export const MODIFIERS = {
       let target = into < 0 ? norm(sub(d, mul(away, 2 * into))) : norm([d[0] + away[0], d[1] + away[1], d[2] + away[2]]);
       // Head on, the mirror is straight back: lean it to one side so there is a way to turn.
       if (len(cross(d, target)) < 1e-3) target = norm([target[0] + perpendicular(d)[0] * 0.5, target[1] + perpendicular(d)[1] * 0.5, target[2] + perpendicular(d)[2] * 0.5]);
-      return turnToward(d, target, Math.PI * 0.5 * k * near);
+      return turnToward(d, target, Math.min(Math.PI * 0.5, seg / radius) * k * Math.max(near, 0.25));
     });
   },
 

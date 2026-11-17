@@ -1,6 +1,6 @@
 // Writes the node reference (public/docs/index.html) from the node definitions, so it never goes out of date.
 // Each part is a picture of it (public/docs/img, taken from the editor) with short notes on the same lines beside it.
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { NODE_TYPES } from '../src/graph/schema.js';
 import { TABS, SHAPE_MODS, SURFACE_MODS } from '../src/graph/defs-unified.js';
@@ -51,9 +51,9 @@ const mesh = nodeDoc(NODE_TYPES.Mesh, (k) => `mesh-${k}`);
 const mix = nodeDoc(NODE_TYPES.Mix, () => 'mix');
 
 const INTERFACE = `<ul>
-<li><b>Toolbar</b> (top) — File (new, open a file or a sample, save, backup, import, export), undo and redo, add a Spline, Mesh or Mix node, materials and the cutout editor, layout, shading, wireframe, and Render · Bake · Pack. Each group can be folded into one button or hidden in Settings › Toolbar. Drag its grip to dock it on any edge.</li>
-<li><b>Node graph</b> (left) — the plant as nodes. A node's eye switches it on and off; its tabs hold its settings. Right-click empty space to add a node.</li>
-<li><b>3D view</b> (right) — the plant itself. Click a part to pick its node.</li>
+<li><b>Toolbar</b> (top) — File (new, open a file or a sample, save, backup, import, export), undo and redo, add a Spline, Mesh or Mix node, materials and the cutout editor, layout, shading, wireframe, and Render · Bake · Pack. Each group can be folded into one button or hidden in Settings › Toolbar. Drag its grip to dock it on any edge; scroll it, resize it into rows from its end, or click the leaf to fold it away.</li>
+<li><b>Node graph</b> (right; Settings can swap the sides) — the plant as nodes. A node's eye switches it on and off; its tabs hold its settings. Right-click empty space to add a node.</li>
+<li><b>3D view</b> (left) — the plant itself. Click a part to pick its node.</li>
 <li><b>Navigation icons</b> — pan, zoom and frame each view without a mouse; drag their grip to dock them on a wall.</li>
 <li><b>Gizmo and dials</b> (top corner of the 3D view) — click an axis to look along it; the dials turn the light and the wind (click the middle to switch one off); the ruler shows the scale figure.</li>
 </ul>`;
@@ -67,6 +67,11 @@ const EXPORT = `<p>The Export window picks the format (GLB, FBX, or OBJ in a zip
 <li><b>Vertex animation</b> — the wind baked as offsets per frame into an EXR, read through the third UV set.</li>
 <li><b>Bone rig</b> (GLB) — one bone per branch; leaves ride the branch they grow on.</li></ul>
 <p><b>Bake</b> and <b>Pack</b> write texture maps. Each map has a checkbox in front and its settings under the arrow at its end: the suffix added to the file name, Dilate (bleeds colors past the edges so mipmaps don't show a fringe), and its own extras. The Packed texture puts any maps into one file's R, G, B and A.</p>`;
+
+// Hand-written parts: About Canopy at the top, and Working in Canopy after the editor.
+const part = (name) => readFileSync(fileURLToPath(new URL(`./${name}`, import.meta.url)), 'utf8');
+const ABOUT = part('docs-about.html');
+const WORKING = part('docs-working.html');
 
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Canopy node reference</title><link rel="icon" href="../favicon.ico">
@@ -83,17 +88,22 @@ h1{margin:0;font-size:28px}h2{color:#7fc241;margin:40px 0 8px}h3{margin:26px 0 6
 .pair .shot{position:sticky;top:12px}.pair img,.wide img{max-width:100%;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.45)}
 .wide{display:grid;grid-template-columns:minmax(0,1.4fr) 1fr;gap:24px;align-items:start}
 ul.mods>li{margin:10px 0}
+.about{padding:20px 0 4px}.about h2{margin-top:0}.hero{display:block;width:100%;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.45);margin:12px 0}
+.credit{font-size:15px}.btns{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}
+.btns a{display:inline-block;padding:8px 16px;border-radius:8px;background:#7fc241;color:#11160f;font-weight:600;text-decoration:none}.btns a:hover{background:#9fd36a}
+.btns a.alt{background:transparent;color:#7fc241;box-shadow:inset 0 0 0 1px #7fc241}.btns a.alt:hover{color:#11160f;background:#9fd36a}
 @media(max-width:900px){main,.pair,.wide{grid-template-columns:1fr}nav{position:static;max-height:none}.pair .shot{position:static}}
 </style></head><body>
 <header><h1>Canopy node reference</h1><p class="muted">The editor, each node tab by tab, the modifiers, and exporting.</p></header>
-<main><nav><h6>Guide</h6><a href="#how">How Canopy works</a><a href="#interface">The editor</a>
+<main><nav><h6>Guide</h6><a href="#about">About Canopy</a><a href="#how">How Canopy works</a><a href="#interface">The editor</a>
+<h6>Working in Canopy</h6><a href="#saving">Saving and backups</a><a href="#welcome">Welcome window</a><a href="#windows">Windows and panels</a><a href="#statusbar">Status bar and tooltips</a><a href="#variation">Variation</a><a href="#toolbar">Toolbar</a><a href="#shortcuts">Shortcuts</a><a href="#units">Units</a><a href="#scale">Scale figure</a>
 <h6>Plant parts</h6>${spline.nav}${mesh.nav}${mix.nav}
 <h6>Modifiers</h6><a href="#${slug('Spline modifiers')}">Spline modifiers</a><a href="#${slug('Mesh modifiers')}">Mesh modifiers</a><a href="#${slug('Shape modifiers')}">Shape modifiers</a>
 <h6>Exporting</h6><a href="#export">Export, Bake and Pack</a></nav>
 <div>
-<section id="how"><h2>How Canopy works</h2>${GUIDE}</section>
+${ABOUT}<section id="how"><h2>How Canopy works</h2>${GUIDE}</section>
 <section id="interface"><h2>The editor</h2><div class="wide"><div>${pic('interface', 'The editor')}</div><div>${INTERFACE}</div></div></section>
-<h2>Plant parts</h2>${spline.html}${mesh.html}${mix.html}
+${WORKING}<h2>Plant parts</h2>${spline.html}${mesh.html}${mix.html}
 <h2 id="modifiers">Modifiers</h2>
 <div class="pair"><div class="shot">${pic('modifiers', 'Modifiers on a Spline node')}</div><div class="text"><p>Modifiers sit in a list on a node's tab. The checkbox switches one on and off, the arrow opens its settings, the six-dot pad drags it up or down (the order matters: each works on what the one above made), and × removes it. <b>+ Add modifier</b> adds one.</p>
 ${modList('Spline modifiers', splineMods)}${modList('Mesh modifiers', SURFACE_MODS)}${modList('Shape modifiers', SHAPE_MODS)}</div></div>

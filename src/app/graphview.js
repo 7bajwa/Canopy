@@ -45,6 +45,25 @@ const KIND_INFO = {
 };
 
 // The text for the tooltip under the pointer, or null when there's nothing to say.
+// What a value without its own hint does, from its kind.
+function paramUse(p, zone) {
+  const unit = p.unit ? ` in ${p.unit === 'cm' ? 'length units' : p.unit === '°' ? 'degrees' : p.unit}` : '';
+  const how = {
+    num: `A number${unit}. Drag to change, click to type, right-click for copy, reset and sockets.`,
+    vec: 'X, Y and Z. Drag a box to change it, click to type.',
+    bool: 'On or off. Click to switch.',
+    enum: 'Click to pick one.',
+    toggles: 'Click to switch each one.',
+    color: 'Click to pick a color.',
+    texture: 'Click to pick a picture.', atlas: 'Click to pick a picture.',
+    matref: 'Click to pick a material.', matslot: 'Click to pick a material.',
+    curve: 'Click to edit the curve.',
+    ref: 'Click to pick a node.',
+    action: 'Click to open.',
+  }[p.t] || 'Click to change.';
+  return zone === 'label' && p.t === 'num' ? `Drag the name to change it. ${how}` : how;
+}
+
 export function describeHit(hit) {
   if (!hit) return null;
   if (hit.part === 'socket') {
@@ -57,14 +76,18 @@ export function describeHit(hit) {
   if (hit.part === 'fold') return { title: 'Show more or less', text: 'Click to cycle through short, normal and all settings on the node.' };
   if (hit.part === 'tab') { const t = TABS[hit.tab]; return { title: t.label, text: t.text }; }
   if (hit.part === 'row') {
-    if (hit.zone === 'var') return { title: 'Variation', text: 'Varies this value up and down per entity, as a percentage of the value.' };
-    if (hit.zone === 'curve') return { title: 'Curve', text: 'Changes this value along the length, along any parent, or across the whole plant.' };
+    if (hit.zone === 'var') {
+      const abs = (hit.row.owner?.varyMode?.[hit.row.param?.k] ?? (hit.row.param?.abs ? 'abs' : 'pct')) === 'abs';
+      return { title: `Variation (${abs ? 'Absolute' : 'Percent'})`, text: abs ? 'Each one gets up to this much more or less, even at 0. Click to change, right-click to copy or reset.' : 'Each one gets up to this share of the value more or less. Click to change, right-click to copy or reset.' };
+    }
+    if (hit.zone === 'curve') return { title: 'Curve', text: 'Shapes this value along its own length, along a parent, or across the whole plant.' };
     if (hit.zone === 'fold') return { title: hit.row.label, text: hit.row.open ? 'Click to fold this group away.' : 'Click to open this group.' };
     if (hit.row.kind === 'mod') {
       const d = modDef(hit.row.set, hit.row.mod.type);
       return { title: hit.row.mod.name || d?.title || 'Modifier', text: d?.desc || '' };
     }
     if (hit.row.param?.hint) return { title: hit.row.param.l, text: hit.row.param.hint };
+    if (hit.row.param) return { title: hit.row.param.l, text: paramUse(hit.row.param, hit.zone) };
   }
   if (hit.node) {
     const def = NODE_TYPES[hit.node.type];
@@ -610,7 +633,7 @@ export class GraphView {
         c.fillStyle = T.field;
         c.beginPath(); c.roundRect(bx + i * (w3 + 2), by, w3, bh, 3); c.fill();
         c.fillStyle = T.ink; c.textAlign = 'center';
-        c.fillText(p.unit === 'cm' ? showLength(+a).replace(' cm', '') : fmt(+a), bx + i * (w3 + 2) + w3 / 2, y, w3 - 2);
+        c.fillText(p.unit === 'cm' ? showLength(+a, true) : fmt(+a), bx + i * (w3 + 2) + w3 / 2, y, w3 - 2);
         c.textAlign = 'left';
       });
     } else if (p.t === 'toggles') {
@@ -654,7 +677,8 @@ export class GraphView {
         c.fillStyle = T.field;
         c.beginPath(); c.roundRect(n.x + g.vary[0], by, g.vary[1] - g.vary[0], bh, 3); c.fill();
         c.fillStyle = pct ? '#ffd04d' : T.muted; c.textAlign = 'center';
-        c.fillText(`±${+pct.toFixed(1)}`, n.x + (g.vary[0] + g.vary[1]) / 2, y, g.vary[1] - g.vary[0] - 2);
+        const abs = (r.owner.varyMode?.[p.k] ?? (p.abs ? 'abs' : 'pct')) === 'abs';
+        c.fillText(`±${+pct.toFixed(1)}${abs || !pct ? '' : '%'}`, n.x + (g.vary[0] + g.vary[1]) / 2, y, g.vary[1] - g.vary[0] - 2);
         c.textAlign = 'left';
       } else {
         c.fillStyle = pct ? '#ffd04d' : wa(.5); c.textAlign = 'center';

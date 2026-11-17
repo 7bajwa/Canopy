@@ -3,7 +3,8 @@ import { NODE_TYPES, socketsOf } from '../graph/schema.js';
 import { hash, hashString, clamp, DEG, bakeCurve, sampleCurve, dot, norm, sub } from './math.js';
 import { finishLine, ensureFrames, pointAt, tOf, sampleLine, newSample } from './line.js';
 import { makeShape, shapeSize } from './shapes.js';
-import { MODIFIERS } from './modifiers.js';
+import { MODIFIERS, inRange } from './modifiers.js';
+import { RANGED } from '../graph/defs-mods.js';
 import { makeSpawns, drawnLines } from './distribute.js';
 import { growColonization, cloudPoints, unifySkeleton } from './colonize.js';
 import { growthLines } from './growth.js';
@@ -125,8 +126,9 @@ export class Evaluator {
       const g = f;
       const salt = hashString(p.k);
       const seed = this.h(node);
-      // Values that sit at 0 (angles, offsets) vary by an amount of their own; a percentage of 0 would do nothing.
-      f = p.abs
+      // Percent varies by a share of the value (nothing at 0); Absolute adds up to that amount either way, even at 0.
+      // Values that sit at 0 (angles, offsets) start as Absolute.
+      f = (node.params.varyMode?.[p.k] ?? (p.abs ? 'abs' : 'pct')) === 'abs'
         ? (c) => g(c) + vary * (hash(seed, c.lineId, salt) * 2 - 1)
         : (c) => g(c) * (1 + (vary / 100) * (hash(seed, c.lineId, salt) * 2 - 1));
     }
@@ -137,14 +139,11 @@ export class Evaluator {
   // Where a value is being read on its chain: the line itself, or the parent it is about to grow from.
   chainStart(c) { return c.line ? [c.line, c.t] : [c.parentLine, c.pos]; }
 
-  // How far along one ancestor (by the node a person sees) this point of the chain attaches.
+  // An ancestor's (by the node a person sees) own factor: where that ancestor sits among the ones its placement
+  // made, from first to last. So a curve along a parent reads the parent's distribution, as its own curve reads its own.
   chainAt(c, owner) {
-    let [line, at] = this.chainStart(c);
-    while (line) {
-      if (ownerOf(line.node.id) === owner) return at;
-      at = line.parent ? tOf(line.parent, line.parentS) : 0;
-      line = line.parent;
-    }
+    let [line] = this.chainStart(c);
+    for (; line; line = line.parent) if (ownerOf(line.node.id) === owner) return line.pos || 0;
     return 0;
   }
 
@@ -384,7 +383,9 @@ export class Evaluator {
       const nextId = this.lineIdFor(node, sp.parent);
       if (sp.hide) continue;
       if (rate < 1 && hash(seed, nextId, 11) > rate) continue;
-      c.line = null; c.parentLine = sp.parent || null; c.t = 0; c.lineId = nextId; c.level = sp.level || 0; c.pos = sp.pos || 0; c.chainPos = 0;
+      // Values read once per line (its Length, say) take their own curve at the entity's factor: its place among
+      // the ones its placement made, from first to last.
+      c.line = null; c.parentLine = sp.parent || null; c.t = sp.pos || 0; c.lineId = nextId; c.level = sp.level || 0; c.pos = sp.pos || 0; c.chainPos = 0;
       c.angleDiv = sp.angleDiv || 0; c.angleBend = sp.angleBend || 0; c.offset = sp.offset || 0;
       c.distance = sp.distance || 0; c.surfaceLevel = sp.surfaceLevel || 0;
       c.length = sp.parent ? sp.parent.length : 0; c.radius = sp.parent ? sp.parent.r0 || 0 : 0;
@@ -448,7 +449,9 @@ export class Evaluator {
     for (const m of chain) {
       const fn = MODIFIERS[m.type];
       if (!fn) continue;
-      fn(this, m, line, this.q(m));
+      const a = clamp((+m.params.from || 0) / 100, 0, 1); const b = clamp((m.params.to ?? 100) / 100, 0, 1);
+      if (RANGED.has(m.type) && (a > 0 || b < 1)) inRange(this, fn, m, line, a, b);
+      else fn(this, m, line, this.q(m));
       if (line.dead) return;
       finishLine(line);
     }

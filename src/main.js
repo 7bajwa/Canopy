@@ -32,12 +32,16 @@ import { applyTheme, themeOf } from './app/themes.js';
 import { WIND_PRESETS } from './graph/defs-unified.js';
 import { GROWTH_PRESETS } from './engine/growth.js';
 import { dockAt } from './app/dock.js';
-import { readSample, readDocumentText, pathOf, saveDocument, readDocumentFile, saveNodes, parseDocument, pickFile, readDataUrl, importMesh, downloadImage, autosave, loadAutosave, documentText, downloadText, safeName, storeBackup } from './app/io.js';
-import { makeBackups } from './app/backup.js';
-import { setUnits } from './app/units.js';
+import { readSample, readDocumentText, pathOf, saveDocument, readDocumentFile, saveNodes, parseDocument, pickFile, readDataUrl, importMesh, downloadImage, autosave, loadAutosave, documentText, downloadText, safeName, storeBackup, forgetFile, writeTablet } from './app/io.js';
+import { makeBackups, backupName } from './app/backup.js';
+import { setUnits, lengthUnit } from './app/units.js';
+import { initWindows, movable, resetWindows } from './app/winmove.js';
+import { commandFor } from './app/shortcuts.js';
 
 const $ = (s) => document.querySelector(s);
 const stage = $('#stage');
+const barEl = $('#bar');
+const welcomeEl = $('#welcome');
 const graph = new GraphView($('#graph'));
 const view = new Viewport($('#view'));
 
@@ -45,15 +49,19 @@ const PREFS_KEY = 'canopy-prefs';
 function storedPrefs() {
   try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch { return {}; }
 }
-const prefs = { shadows: view.renderer.shadowMap.enabled, snap: false, graphDim: 1, layout: 'overlay', ui: 1, text: 1, varShow: 'icon', fadeOn: true, fadeStrength: 0.85, fadeSize: 1.25, exposure: 1, envLight: 0.55, navAt: 'middle', units: 'metric', windMin: 0, windMax: 10, gustFreq: 6, windSpeed: 1, windDir: 20, scaleShow: 'both', backupMin: 5, undoSteps: 80, shading: 'pbr', theme: 'forest', grid: true, gizmo: true,
+const prefs = { shadows: view.renderer.shadowMap.enabled, snap: false, graphDim: 1, layout: 'overlay', ui: 1, text: 1, varShow: 'box', fadeOn: true, fadeStrength: 0.85, fadeSize: 1.25, exposure: 1, envLight: 0.55, navAt: 'middle', units: 'metric', windMin: 0, windMax: 10, gustFreq: 6, windSpeed: 1, windDir: 20, scaleShow: 'both', backupMin: 15, undoSteps: 80, shading: 'pbr', theme: 'forest', grid: true, gizmo: true,
   focus: 'auto', splitAt: 0.5, toolGroups: {}, wireColor: '#000000', wireOpacity: 0.35, dials: true, dialSize: 48, gizmoSize: 96, sunYaw: 38, navY2d: null, navY3d: null,
   texturesInFile: 'embed', renderSize: 2048, renderHeight: null, renderCamera: 'frame', renderGrid: false, renderPost: {}, glow: false, renderFigure: false, renderGround: true, renderBg: 'clear', renderBgColor: '#11160f', backupOn: true, aiBridge: false, devMode: false, updateCheck: true, updateAuto: false,
-  groundOn: true, groundColor: '#3a4a30', groundOpacity: 0.35, groundSize: 200, groundGrid: true, groundShadow: true, swapViews: false, barAt: 'top', navWall2d: null, navWall3d: null, customThemes: {}, xfBox: 'touch', ...storedPrefs() };
+  groundOn: true, groundColor: '#3a4a30', groundOpacity: 0.35, groundSize: 200, groundGrid: true, groundShadow: true, swapViews: true, barAt: 'top', navWall2d: null, navWall3d: null, customThemes: {}, xfBox: 'touch',
+  unitLen: 'cm', statusOn: true, statusSize: 1, tipOn: true, tipDelay: 3, welcome: true, varyDefault: 0, hoverOpen: false, hoverDelay: 0.4, webBackup: 'ask', figures: {}, keys: {}, win: {}, barW: null, barRows: 1, barFold: false, ...storedPrefs() };
 const savePrefs = () => localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
 // Pictures were square before height had its own setting.
 prefs.renderHeight ??= prefs.renderSize;
 // Once, for this version: the new starting look (no graph grid, snapping on, no glow, a folded toolbar, a smaller ground).
 if (!prefs.seen39) Object.assign(prefs, { grid: false, snap: true, glow: false, toolGroups: {}, groundSize: 200, seen39: true });
+// Once, for this version: backups every 15 minutes, variation in its own box, the 3D view on the left.
+if (!prefs.seen49) Object.assign(prefs, { backupMin: 15, backupOn: true, varShow: 'box', swapViews: true, seen49: true });
+initWindows(prefs, () => savePrefs());
 
 // ---- Messages ----
 let toastTimer = 0;
@@ -130,17 +138,29 @@ const under = (btn) => {
   return { x: r.left - s.left, y: r.bottom - s.top + 6 };
 };
 
-// ---- Tooltips ----
+// ---- Tooltips and the status bar ----
+// Anything with a title shows it in the status bar at once, and in a tip after the delay set in Settings. Titles move
+// to data-tip on first hover so the browser's own slow tip doesn't show as well.
 const tip = $('#tip');
+document.body.append(tip);
+const hint = $('#hint');
 let tipKey = '';
 let tipTimer = 0;
+function setStatus(title, text) {
+  if (!title) { hint.replaceChildren(); hint.hidden = true; return; }
+  const b = document.createElement('b'); b.textContent = title;
+  hint.replaceChildren(b, text ? ` ${text}` : '');
+  hint.hidden = false;
+}
+// info: { title, text }; p: a point in the stage (graph), or { cx, cy } on the screen.
 function hoverTip(info, p) {
   const key = info ? info.title + info.text : '';
   if (key === tipKey) return;
   tipKey = key;
   clearTimeout(tipTimer);
   tip.hidden = true;
-  if (!info) return;
+  setStatus(info?.title, info?.text);
+  if (!info || !prefs.tipOn) return;
   tipTimer = setTimeout(() => {
     tip.replaceChildren();
     const b = document.createElement('b');
@@ -148,12 +168,25 @@ function hoverTip(info, p) {
     tip.append(b);
     if (info.text) tip.append(document.createElement('br'), info.text);
     tip.hidden = false;
-    const r = stage.getBoundingClientRect(); const t = tip.getBoundingClientRect();
-    tip.style.left = `${Math.max(4, Math.min(r.width - t.width - 8, p.x + 14)) / prefs.ui}px`;
-    tip.style.top = `${Math.max(4, Math.min(r.height - t.height - 8, p.y + 18)) / prefs.ui}px`;
-  }, 3000);
+    const s = stage.getBoundingClientRect(); const t = tip.getBoundingClientRect(); const ui = prefs.ui || 1;
+    const x = p.cx ?? p.x + s.left; const y = p.cy ?? p.y + s.top;
+    tip.style.left = `${Math.max(4, Math.min(innerWidth - t.width - 8, x + 14)) / ui}px`;
+    tip.style.top = `${Math.max(4, Math.min(innerHeight - t.height - 8, y + 18)) / ui}px`;
+  }, Math.max(0, +prefs.tipDelay || 0) * 1000);
 }
 stage.addEventListener('pointerleave', () => hoverTip(null));
+const tipOf = (e) => e.title || e.dataset.tip || '';
+document.addEventListener('pointerover', (e) => {
+  if (e.pointerType === 'touch') return;
+  const t = e.target.closest?.('[title], [data-tip]');
+  if (!t || stage.contains(t) && !t.closest('.nav, #popup, #dials, #xfbar, #gizmo')) { if (!t) hoverTip(null); return; }
+  if (t.title) { t.dataset.tip = t.title; t.removeAttribute('title'); }
+  const text = tipOf(t); const name = t.getAttribute('aria-label') || '';
+  // A title that starts with the button's name splits there: the name, then what it does.
+  const cut = name && text.startsWith(name) ? text.slice(name.length).replace(/^[:.,]\s*/, '') : text;
+  hoverTip({ title: name && cut !== text ? name : cut.split(/[:.]\s/)[0], text: name && cut !== text ? cut : cut.includes(': ') ? cut.slice(cut.indexOf(': ') + 2) : '' }, { cx: e.clientX, cy: e.clientY });
+}, true);
+document.addEventListener('pointerout', (e) => { if (e.target.closest?.('[data-tip]') && !e.relatedTarget?.closest?.('[data-tip]')) hoverTip(null); }, true);
 
 function addMenu(p, wire = null) {
   const plugs = (s) => (wire.dir === 'out' ? kindFits(wire.kind, s) : kindFits(s.kind, wire.sock));
@@ -177,6 +210,12 @@ const newNode = (type, x, y) => {
   const n = addNode(type, x, y);
   // Tabs start with the first one open, so the settings of a new node are one glance away.
   if (NODE_TYPES[type].tabs) n.tab = NODE_TYPES[type].tabs[0];
+  // Settings, System: every value that can vary starts with this much, for a more natural look from the start.
+  if (+prefs.varyDefault > 0) {
+    const vary = { ...n.params.vary };
+    for (const p of NODE_TYPES[type].params) if (p.t === 'num' && p.to && !p.abs && !p.noVary && !p.int && !(p.k in vary)) vary[p.k] = +prefs.varyDefault;
+    n.params.vary = vary;
+  }
   return n;
 };
 const settleNew = (n) => {
@@ -212,10 +251,19 @@ function paramMenu(p, node, row, zone) {
   if (zone === 'var' || zone === 'curve') {
     const what = zone === 'var' ? 'variation' : 'curve';
     const key = zone === 'var' ? 'vary' : 'curves';
-    const put = (v) => { owner[key] = { ...owner[key] }; if (v === undefined) delete owner[key][k]; else owner[key][k] = clone(v); done(); };
+    // A curve is every level of it: this one and each parent's (k@id) and the whole plant's, copied and reset together.
+    const mine = (x) => x === k || (zone === 'curve' && x.startsWith(`${k}@`));
+    const get = () => (zone === 'curve' ? Object.fromEntries(Object.entries(owner.curves || {}).filter(([x]) => mine(x))) : owner[key]?.[k]);
+    const put = (v) => {
+      owner[key] = { ...owner[key] };
+      if (zone === 'curve') { for (const x of Object.keys(owner[key])) if (mine(x)) delete owner[key][x]; Object.assign(owner[key], clone(v || {})); }
+      else if (v === undefined) delete owner[key][k]; else owner[key][k] = clone(v);
+      done();
+    };
     menu(p, [
-      { label: `Copy ${what}`, fn: () => { clip = { what, v: clone(owner[key]?.[k]) }; } },
-      { label: `Paste ${what}`, disabled: clip?.what !== what, fn: () => put(clip.v) },
+      { label: `Copy ${what}`, fn: () => { clip = { what, k, v: clone(get()) }; } },
+      // Pasted onto another value, each level keeps its scope under this value's name.
+      { label: `Paste ${what}`, disabled: clip?.what !== what, fn: () => put(zone === 'curve' ? Object.fromEntries(Object.entries(clip.v || {}).map(([x, c]) => [k + x.slice(clip.k.length), c])) : clip.v) },
       { label: `Reset ${what}`, fn: () => put(undefined) },
     ]);
     return;
@@ -406,6 +454,9 @@ const ui = {
   onDrawStop() { press('pen', false); },
   status(zone) { $('#zone').textContent = zone === 'tree' ? 'Over the tree: scroll zooms the tree, right-drag pans it, middle-drag orbits' : 'Over the graph: scroll zooms the graph, right-drag pans it, middle-drag orbits the tree'; },
   addMenu, nodeMenu, paramMenu, sectionMenu, menu, toast, graphRegion, hoverTip,
+  commandFor: (e) => commandFor(e, prefs),
+  run: (id) => runCommand(id),
+  hoverOpen: () => (prefs.hoverOpen ? prefs.hoverDelay : null),
   edit: makeEditors({ popup, placePopup, closePopups, menu, toast }),
   action: (act, node, p) => {
     if (act === 'mateditor') matEditor.open(node.params.material);
@@ -424,8 +475,8 @@ const ui = {
     editCutouts(m);
   },
   openMaterials: (id) => matEditor.open(id),
-  modalOpen: () => atlas.isOpen() || !settingsEl.hidden || matEditor.isOpen() || packer.isOpen(),
-  save: () => saveFile(),
+  modalOpen: () => atlas.isOpen() || !settingsEl.hidden || matEditor.isOpen() || packer.isOpen() || !welcomeEl.hidden,
+  save: () => saveFile(false),
   cycleLayout: () => setLayout(LAYOUTS[(LAYOUTS.indexOf(prefs.layout) + 1) % LAYOUTS.length]),
   setMode,
 };
@@ -490,7 +541,10 @@ function applyPref(k) {
   if (k === 'grid') { graph.showGrid = v; graph.invalidate(); }
   if (k === 'glow') stage.dataset.glow = v ? 'on' : 'off';
   if (k === 'gizmo') placeGizmo();
-  if (k === 'units') { setUnits(v); doc.layoutVersion++; graph.invalidate(); showScale(); }
+  if (k === 'units' || k === 'unitLen') { setUnits(prefs.units, prefs.unitLen); prefs.unitLen = lengthUnit(); savePrefs(); doc.layoutVersion++; graph.invalidate(); showScale(); }
+  if (k === 'figures') showScale();
+  if (k === 'statusOn' || k === 'statusSize') { document.body.toggleAttribute('data-nostatus', !prefs.statusOn); root.setProperty('--foot-k', prefs.statusOn ? prefs.statusSize : 0); layout(); }
+  if (k === 'barW' || k === 'barRows' || k === 'barFold') applyBarSize();
   if (k === 'scaleShow') showScale();
   if (k === 'windMin' || k === 'windMax' || k === 'gustFreq' || k === 'windSpeed' || k === 'windDir') applyGust();
   if (k === 'backupMin') backups.setInterval(v);
@@ -512,12 +566,12 @@ function applyPref(k) {
   if (k === 'swapViews') { layout(); graph.frameNodes(doc.graph.nodes, graphRegion(), true, 0.9, READABLE_ZOOM); }
   if (k.startsWith('ground')) view.setGround({ on: prefs.groundOn, color: prefs.groundColor, opacity: prefs.groundOpacity, size: prefs.groundSize, shadow: prefs.groundShadow, grid: prefs.groundGrid });
   if (k === 'aiBridge') { if (v) startBridge(aiApi()); else stopBridge(); }
-  if (k === 'backupOn') { if (v) startQuietBackups(); else { backups.stop(); press('backup', false); } }
+  if (k === 'backupOn') { if (v) startBackups(); else { backups.stop(); press('backup', false); } }
 }
 function setPref(k, v) { prefs[k] = v; savePrefs(); applyPref(k); }
 const applyGust = () => view.setGust({ min: prefs.windMin, max: prefs.windMax, freq: prefs.gustFreq, speed: prefs.windSpeed, dir: prefs.windDir });
 let scaleOn = false;
-const showScale = () => view.setScale(scaleOn ? prefs.scaleShow : 'off', prefs.units);
+const showScale = () => view.setScale(scaleOn ? prefs.scaleShow : 'off', `${prefs.units}:${prefs.unitLen}`, prefs.figures);
 
 // The graph fades out around the plant so branches stay readable over it.
 const fade = $('#fade');
@@ -542,7 +596,6 @@ const NAV = {
 };
 const NAV_TAP = {
   'g-focus': () => setPref('focus', prefs.focus === 'graph' ? 'auto' : 'graph'),
-  'g-del': () => { input.removeSelection(); showDel(); },
   'v-focus': () => setPref('focus', prefs.focus === 'tree' ? 'auto' : 'tree'),
   'g-zoom': () => NAV['g-zoom'](0, -40),
   'v-zoom': () => NAV['v-zoom'](0, -40),
@@ -581,9 +634,12 @@ const homeSide = (which) => ((which === '2d') !== !!prefs.swapViews ? 'left' : '
 function navDivide() { return prefs.layout === 'split' ? (prefs.swapViews ? 1 - prefs.splitAt : prefs.splitAt) : 0.5; }
 function navSpot(which) {
   // Upright: the tree's icons on the right of the upper part, the graph's on the left of the lower part.
+  // Each set stays in its own half and can sit on either side wall.
   if (isPortrait()) {
     const d = prefs.layout === 'split' ? prefs.splitAt : 0.5;
-    return which === '3d' ? { wall: 'right', at: d / 2, side: 'right' } : { wall: 'left', at: (1 + d) / 2, side: 'left' };
+    const [lo, hi] = which === '3d' ? [0, d] : [d, 1];
+    const at = prefs[`navPY${which}`];
+    return { wall: prefs[`navPW${which}`] || (which === '3d' ? 'right' : 'left'), at: lo + (hi - lo) * (at ?? 0.5), side: 'any' };
   }
   const side = homeSide(which);
   let wall = prefs[`navWall${which}`] || side;
@@ -625,14 +681,25 @@ for (const which of ['2d', '3d']) {
   grip.addEventListener('pointermove', (e) => {
     if (!drag) return;
     const s = stage.getBoundingClientRect(); const ui = prefs.ui || 1;
-    Object.assign(n.style, { left: `${(e.clientX - s.left - drag.dx) / ui}px`, top: `${(e.clientY - s.top - drag.dy) / ui}px`, right: 'auto', bottom: 'auto', transform: '' });
+    // Kept inside the stage, so the grip can always be caught again.
+    const b = n.getBoundingClientRect();
+    const x = Math.max(0, Math.min(s.width - b.width, e.clientX - s.left - drag.dx)); const y = Math.max(0, Math.min(s.height - b.height, e.clientY - s.top - drag.dy));
+    Object.assign(n.style, { left: `${x / ui}px`, top: `${y / ui}px`, right: 'auto', bottom: 'auto', transform: '' });
   });
   grip.addEventListener('pointerup', (e) => {
     if (!drag) return;
     drag = null; n.classList.remove('dragging');
     const s = stage.getBoundingClientRect();
-    const d = dockAt(e.clientX - s.left, e.clientY - s.top, s.width, s.height, homeSide(which), navDivide());
-    prefs[`navWall${which}`] = d.wall; prefs[`navY${which}`] = d.at;
+    const x = Math.max(0, Math.min(s.width, e.clientX - s.left)); const y = Math.max(0, Math.min(s.height, e.clientY - s.top));
+    if (isPortrait()) {
+      const dv = prefs.layout === 'split' ? prefs.splitAt : 0.5;
+      const [lo, hi] = which === '3d' ? [0, dv] : [dv, 1];
+      prefs[`navPW${which}`] = x < s.width / 2 ? 'left' : 'right';
+      prefs[`navPY${which}`] = Math.max(0.1, Math.min(0.9, (y / s.height - lo) / (hi - lo)));
+    } else {
+      const d = dockAt(x, y, s.width, s.height, homeSide(which), navDivide());
+      prefs[`navWall${which}`] = d.wall; prefs[`navY${which}`] = d.at;
+    }
     savePrefs(); placeNavs();
   });
 }
@@ -682,6 +749,11 @@ const groupMode = (k) => prefs.toolGroups?.[k] || GROUP_START[k] || 'compact';
 // picked from it shows on it; clicking it opens the list.
 const toolKey = (b) => b.dataset.act || b.dataset.layoutBtn || b.dataset.shade || b.dataset.mode || b.getAttribute('aria-label');
 const toolsOf = (g) => [...g.querySelectorAll(':scope > button:not(.group-more), :scope > a')];
+const hoverMenu = {
+  t: 0, from: null,
+  leave() { setTimeout(() => { if (this.from && !popup.matches(':hover') && !this.from.matches(':hover')) { this.from = null; closePopups(); } }, 350); },
+};
+popup.addEventListener('pointerleave', () => hoverMenu.leave());
 function applyToolbar() {
   for (const g of document.querySelectorAll('#bar .group[data-group]')) {
     const mode = groupMode(g.dataset.group);
@@ -703,6 +775,13 @@ function applyToolbar() {
         })));
       };
       more.addEventListener('click', (e) => { e.stopPropagation(); list(); });
+      // Hover to open (Settings, Navigation): resting on a folded group opens its list; leaving both closes it.
+      more.addEventListener('pointerenter', (e) => {
+        if (!prefs.hoverOpen || e.pointerType === 'touch') return;
+        clearTimeout(hoverMenu.t);
+        hoverMenu.t = setTimeout(() => { list(); hoverMenu.from = more; }, prefs.hoverDelay * 1000);
+      });
+      more.addEventListener('pointerleave', () => { clearTimeout(hoverMenu.t); hoverMenu.leave(); });
       g.prepend(more);
     }
     const last = shown.find((b) => toolKey(b) === prefs.groupLast?.[g.dataset.group]) || shown[0];
@@ -814,17 +893,41 @@ function showLod() {
 const press = (act, on) => $(`[data-act=${act}]`).setAttribute('aria-pressed', on);
 
 // ---- Backups ----
-const backups = makeBackups({
-  text: documentText,
-  name: () => safeName(doc.name),
-  download: downloadText,
-  toast,
-});
-// Backups that start on their own: beside the saved file or in the app's Backups folder, or kept in the browser.
-async function quietStore(when, body) {
-  if (window.canopyApp) await window.canopyApp.backup(when, body, safeName(doc.name));
-  else await storeBackup(safeName(doc.name), when, body);
+// Every few minutes while the plant changes: the PC app writes to Documents/Canopy/Backups, the tablet to its
+// Documents/Canopy/Backups, and a browser downloads them (after asking once) or keeps them in the browser.
+let savedOnce = false;
+async function writeBackup(when, body) {
+  const file = backupName(savedOnce, safeName(doc.name), when);
+  if (window.canopyApp) return window.canopyApp.backup(when, body, safeName(doc.name));
+  if (await writeTablet(`Backups/${file}`, body)) return true;
+  if (prefs.webBackup === 'ask') {
+    const pick = await ask('Backups', `Every ${prefs.backupMin} minutes, Canopy can download a backup of your plant to your Downloads folder, or keep them in this browser.`, [['keep', 'Keep in browser'], ['download', 'Download']]);
+    if (!pick) return false;
+    setPref('webBackup', pick);
+  }
+  if (prefs.webBackup === 'download') downloadText(file, body); else await storeBackup(safeName(doc.name), when, body);
+  return true;
 }
+const backups = makeBackups({ text: documentText, write: writeBackup, toast });
+function startBackups() { backups.start(prefs.backupMin); press('backup', true); }
+
+// A small question with buttons: resolves to the picked key, or null when closed.
+function ask(title, text, buttons) {
+  const box = $('#ask');
+  box.querySelector('h2').textContent = title;
+  box.querySelector('p').textContent = text;
+  const row = box.querySelector('.row-buttons');
+  row.replaceChildren();
+  box.hidden = false;
+  return new Promise((done) => {
+    const finish = (v) => { box.hidden = true; done(v); };
+    const close = document.createElement('button'); close.className = 'wide'; close.textContent = 'Not now';
+    close.addEventListener('click', () => finish(null));
+    row.append(close);
+    buttons.forEach(([k, l], i) => { const b = document.createElement('button'); b.className = `wide${i === buttons.length - 1 ? ' primary' : ''}`; b.textContent = l; b.addEventListener('click', () => finish(k)); row.append(b); });
+  });
+}
+
 // The commands AI control offers, on the live document.
 let ai = null;
 function aiApi() {
@@ -835,21 +938,10 @@ function aiApi() {
   });
   return ai;
 }
-function startQuietBackups() { backups.startQuiet(prefs.backupMin, quietStore); press('backup', true); }
-const backupEl = $('#backup');
-$('#backup [data-close]').addEventListener('click', () => { backupEl.hidden = true; });
-$('#backup [data-save]').addEventListener('click', async () => {
-  backupEl.hidden = true;
-  const ok = await backups.start(prefs.backupMin);
-  press('backup', ok);
-  if (ok) toast(`Saved. A new backup follows every ${prefs.backupMin} minutes while the plant changes.`, 4000);
-});
-
 // ---- Events ----
 on('graph', () => graph.invalidate());
 // The touch Delete button shows while a node or a wire is picked, since fingers have no Delete key.
-const showDel = () => { const b = $('[data-nav=g-del]'); if (b) b.hidden = !(graph.touch && (doc.sel.size || doc.link)); };
-on('selection', () => { graph.invalidate(); view.highlight(); showDel(); });
+on('selection', () => { graph.invalidate(); view.highlight(); });
 on('result', (res) => {
   renderer.refresh();
   view.apply(res);
@@ -946,6 +1038,7 @@ async function openSample(s) {
     const title = s.name;
     const g = d.graph || { nodes: d.nodes, links: d.links, groups: [], settings: {} };
     await ensureCutouts(g, { fill: true });
+    forgetFile(); savedOnce = false;
     openGraph(g, title, d.assets || {});
   } catch (e) { toast(`That sample could not be opened: ${e.message}`, 5000); }
 }
@@ -954,6 +1047,7 @@ async function startFresh() {
   if (!okToReplace()) return;
   // The name is edited in the toolbar, so a new plant opens at once.
   const title = 'Untitled';
+  forgetFile(); savedOnce = false;
   openGraph({ nodes: [], links: [], groups: [], materials: [], settings: { seed: 1 } }, title, {});
   toast('Empty. Use the Spline and Mesh icons on top, or press Space, to add your first node.');
 }
@@ -963,18 +1057,27 @@ async function openFile() {
   if (!f || !okToReplace()) return;
   try {
     const d = await readDocumentFile(f);
-    await openGraph(d.graph || { nodes: d.nodes, links: d.links, groups: [], settings: {} }, d.name || f.name.replace(/\.\w+$/, ''), { ...doc.assets, ...d.assets });
+    forgetFile(); window.canopyApp?.setCurrent?.(pathOf(f)); savedOnce = true;
+    await openGraph(d.graph || { nodes: d.nodes, links: d.links, groups: [], settings: {} }, f.name.replace(/\.\w+$/, '') || d.name, { ...doc.assets, ...d.assets });
     missingPictures(d);
   } catch (e) { toast(e.message, 5000); }
 }
 const missingPictures = (d) => { if (d.missingPictures) toast(`${d.missingPictures} texture${d.missingPictures > 1 ? 's were' : ' was'} not found where the file says. Load them again in the Material editor.`, 7000); };
 // Saving keeps a small picture of the plant in the file.
-const saveFile = () => saveDocument(prefs.texturesInFile, view.meshes.length ? renderer.image({ thumb: true }) : null);
+// The PC app says what the file was called; the plant takes that name, so the two stay alike.
+// Save writes over the open file; Save As (as = true) asks where.
+const saveFile = (as = false) => saveDocument(prefs.texturesInFile, view.meshes.length ? renderer.image({ thumb: true }) : null, as).then((r) => {
+  if (r) savedOnce = true;
+  if (typeof r === 'string' && r.replace(/\.canopy$/i, '')) { doc.name = r.replace(/\.canopy$/i, ''); $('#doc-name').value = doc.name; }
+  if (r) toast(typeof r === 'string' ? `Saved ${r}.` : 'Saved.', 1800);
+  return r;
+}).catch((e) => { console.error(e); toast(`The file could not be saved: ${e.message}`, 6000); });
 // The PC app hands over a .canopy double-clicked in Explorer.
 window.canopyApp?.onOpenFile?.(async ({ name, text, dir }) => {
   if (!okToReplace()) return;
   try {
     const d = await readDocumentText(text, dir);
+    savedOnce = true;
     await openGraph(d.graph || { nodes: d.nodes, links: d.links, groups: [], settings: {} }, d.name || name.replace(/\.\w+$/, ''), d.assets || {});
     missingPictures(d);
   } catch (e) { toast(e.message, 5000); }
@@ -1027,11 +1130,12 @@ const actions = {
     { label: 'Node File…', fn: importNodes },
     { label: 'View Library', fn: () => library.show() },
   ]),
-  save: () => saveFile(),
+  save: () => saveFile(false),
+  saveAs: () => saveFile(true),
   import: importMeshFile,
   backup() {
-    if (backups.running()) { backups.stop(); press('backup', false); toast('Backups are off.'); return; }
-    backupEl.hidden = false;
+    setPref('backupOn', !backups.running());
+    toast(prefs.backupOn ? `Backups on: every ${prefs.backupMin} minutes while the plant changes.` : 'Backups are off.');
   },
   addSpline: () => addFromBar('Spline'),
   // A Growth tree: a Growth node that grows the trunk and branches (engine/growth.js), with a leaf Spline on them.
@@ -1120,7 +1224,7 @@ const actions = {
   cards: () => cards.open(),
   life: () => life.open(),
   undo, redo,
-  prefs: () => openSettings(settingsEl, prefs, setPref),
+  prefs: () => openSettings(settingsEl, prefs, setPref, { resetLayout, status: setStatus }),
   seed() {
     doc.graph.settings.seed = Math.floor(Math.random() * 99999);
     regenerate();
@@ -1140,11 +1244,153 @@ document.addEventListener('click', (e) => {
 });
 
 $('#doc-name').addEventListener('change', (e) => { doc.name = e.target.value || 'Untitled'; changed({ rebuild: false }); });
+// The name's width: drag its grip; dragged right down it hides, and a double-click shows or hides it. Kept in prefs.
+{
+  const box = $('#doc-name'); const grip = $('#doc-grip');
+  const show = (w) => { box.classList.toggle('gone', !w); box.style.flexBasis = w ? `${w}px` : ''; box.style.minWidth = w ? '0' : ''; };
+  show(prefs.nameW ?? 150);
+  let from = null;
+  grip.addEventListener('pointerdown', (e) => { from = [e.clientX, prefs.nameW ?? 150]; grip.setPointerCapture(e.pointerId); });
+  grip.addEventListener('pointermove', (e) => {
+    if (!from) return;
+    const w = Math.round(Math.min(600, from[1] + (e.clientX - from[0]) / (prefs.ui || 1)));
+    prefs.nameW = w < 30 ? 0 : Math.max(40, w); show(prefs.nameW);
+  });
+  grip.addEventListener('pointerup', () => { if (from) savePrefs(); from = null; });
+  grip.addEventListener('dblclick', () => { prefs.nameW = prefs.nameW === 0 ? 150 : 0; show(prefs.nameW); savePrefs(); });
+}
+
+// ---- Commands by name: shortcuts and the Shortcuts tab run these ----
+function stepTab(d) {
+  const n = primary(); const tabs = n && NODE_TYPES[n.type].tabs;
+  if (!tabs?.length) return;
+  n.tab = tabs[(tabs.indexOf(n.tab) + d + tabs.length) % tabs.length];
+  changed({ layout: true, rebuild: false });
+}
+function runCommand(id) {
+  const lay = { layoutOverlay: 'overlay', layoutSplit: 'split', layoutTree: 'tree', layoutGraph: 'graph' }[id];
+  if (lay) { setLayout(lay); return; }
+  const extra = {
+    library: () => library.show(), toolbar: () => setPref('barFold', !prefs.barFold), welcome: () => showWelcome(),
+    nextTab: () => stepTab(1), prevTab: () => stepTab(-1), open: openFile,
+  }[id];
+  if (extra) { extra(); return; }
+  closePopups();
+  actions[id]?.(document.querySelector(`[data-act="${id}"]`));
+}
+
+// ---- Welcome ----
+function showWelcome() { welcomeEl.querySelector('[data-w-start]').checked = prefs.welcome !== false; welcomeEl.hidden = false; }
+const closeWelcome = () => { welcomeEl.hidden = true; };
+welcomeEl.querySelector('[data-close]').addEventListener('click', closeWelcome);
+welcomeEl.addEventListener('pointerdown', (e) => { if (e.target === welcomeEl) closeWelcome(); });
+welcomeEl.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeWelcome(); e.stopPropagation(); });
+welcomeEl.querySelector('[data-w-start]').addEventListener('change', (e) => setPref('welcome', e.target.checked));
+for (const b of welcomeEl.querySelectorAll('[data-w]')) b.addEventListener('click', () => { closeWelcome(); ({ new: startFresh, library: () => library.show(), open: openFile })[b.dataset.w](); });
+for (const a of welcomeEl.querySelectorAll('a')) a.addEventListener('click', closeWelcome);
+
+// ---- Toolbar: fold into the leaf, scroll when it doesn't fit, resize for length and rows ----
+const toolsEl = barEl.querySelector('.tools');
+function applyBarSize() {
+  barEl.classList.toggle('folded', !!prefs.barFold);
+  barEl.querySelector('[data-fold]').setAttribute('aria-expanded', !prefs.barFold);
+  const side = barSide() === 'left' || barSide() === 'right';
+  barEl.style.setProperty('--bar-len', prefs.barW ? `${prefs.barW}px` : '');
+  barEl.dataset.rows = Math.max(1, prefs.barRows || 1);
+  barEl.classList.toggle('sized', !!prefs.barW || prefs.barRows > 1);
+  barEl.classList.toggle('side', side);
+  requestAnimationFrame(() => { placeGizmo(); placeNavs(); });
+}
+barEl.querySelector('[data-fold]').addEventListener('click', () => setPref('barFold', !prefs.barFold));
+// The wheel scrolls the icons along the bar; a drag on them scrolls too, and doesn't press the button it started on.
+toolsEl.addEventListener('wheel', (e) => {
+  const side = barEl.classList.contains('side');
+  const room = side ? toolsEl.scrollHeight > toolsEl.clientHeight : toolsEl.scrollWidth > toolsEl.clientWidth;
+  if (!room) return;
+  e.preventDefault();
+  if (side) toolsEl.scrollTop += e.deltaY + e.deltaX; else toolsEl.scrollLeft += e.deltaY + e.deltaX;
+}, { passive: false });
+{
+  let from = null; let moved = false;
+  toolsEl.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button) return; from = { x: e.clientX, y: e.clientY, l: toolsEl.scrollLeft, t: toolsEl.scrollTop, id: e.pointerId }; moved = false; });
+  toolsEl.addEventListener('pointermove', (e) => {
+    if (!from || from.id !== e.pointerId) return;
+    const dx = e.clientX - from.x; const dy = e.clientY - from.y;
+    if (!moved && Math.hypot(dx, dy) < 8) return;
+    if (!moved) { moved = true; toolsEl.setPointerCapture(e.pointerId); }
+    toolsEl.scrollLeft = from.l - dx; toolsEl.scrollTop = from.t - dy;
+  });
+  const end = () => { from = null; };
+  toolsEl.addEventListener('pointerup', end); toolsEl.addEventListener('pointercancel', end);
+  toolsEl.addEventListener('click', (e) => { if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; } }, true);
+}
+{
+  const size = barEl.querySelector('.bar-size');
+  let from = null;
+  size.addEventListener('pointerdown', (e) => { e.stopPropagation(); size.setPointerCapture(e.pointerId); from = { x: e.clientX, y: e.clientY, w: (barEl.classList.contains('side') ? barEl.getBoundingClientRect().height : barEl.getBoundingClientRect().width) / (prefs.ui || 1), rows: prefs.barRows || 1 }; });
+  size.addEventListener('pointermove', (e) => {
+    if (!from) return;
+    const ui = prefs.ui || 1; const side = barEl.classList.contains('side');
+    const along = (side ? e.clientY - from.y : e.clientX - from.x) / ui;
+    const across = ((side ? e.clientX - from.x : e.clientY - from.y) / ui) * (barSide() === 'bottom' || barSide() === 'right' ? -1 : 1);
+    // A centered bar grows both ways, so its end moves half as far as its length.
+    prefs.barW = Math.round(Math.max(120, from.w + (side ? along * 2 : along * 2)));
+    prefs.barRows = Math.max(1, Math.min(4, from.rows + Math.round(across / 38)));
+    applyBarSize();
+  });
+  size.addEventListener('pointerup', () => { if (from) savePrefs(); from = null; });
+  size.addEventListener('dblclick', () => { setPref('barW', null); setPref('barRows', 1); });
+}
+
+// ---- Windows that move and resize ----
+movable(settingsEl.querySelector('.settings-card'), settingsEl.querySelector('h2'), 'settings');
+movable($('#materials .settings-card'), $('#materials h2'), 'materials');
+movable($('#atlas .atlas-card'), $('#atlas .atlas-top'), 'cutouts');
+movable(welcomeEl.querySelector('.settings-card'), welcomeEl.querySelector('.welcome-head'), 'welcome');
+movable($('#bake'), $('#bake h2'), 'bake');
+// A popup with a title (the curve editor and other value editors) moves by it, and the wide ones resize.
+{
+  let grab = null;
+  popup.addEventListener('pointerdown', (e) => {
+    const h = e.target.closest('#popup > h4:first-child');
+    if (!h) return;
+    const r = popup.getBoundingClientRect(); grab = { dx: e.clientX - r.left, dy: e.clientY - r.top }; h.setPointerCapture(e.pointerId);
+  });
+  popup.addEventListener('pointermove', (e) => {
+    if (!grab) return;
+    const s = stage.getBoundingClientRect(); const ui = prefs.ui || 1;
+    popup.style.left = `${Math.max(0, Math.min(s.width - 60, e.clientX - s.left - grab.dx)) / ui}px`;
+    popup.style.top = `${Math.max(0, Math.min(s.height - 30, e.clientY - s.top - grab.dy)) / ui}px`;
+  });
+  popup.addEventListener('pointerup', () => { grab = null; });
+  let t = 0;
+  new ResizeObserver(() => {
+    if (!popup.classList.contains('wide-pop') || !popup.style.width) return;
+    clearTimeout(t); t = setTimeout(() => { prefs.win = { ...prefs.win, curve: { w: popup.offsetWidth } }; savePrefs(); }, 300);
+  }).observe(popup);
+  new MutationObserver(() => {
+    if (popup.classList.contains('wide-pop') && prefs.win?.curve?.w) popup.style.width = `${prefs.win.curve.w}px`;
+    else if (!popup.classList.contains('wide-pop')) popup.style.width = '';
+  }).observe(popup, { attributes: true, attributeFilter: ['class'] });
+}
+// Everything back where it starts: windows, bars, the split and the scales.
+function resetLayout() {
+  resetWindows();
+  for (const k of ['navY2d', 'navY3d', 'navWall2d', 'navWall3d', 'navPW2d', 'navPW3d', 'navPY2d', 'navPY3d']) prefs[k] = null;
+  Object.assign(prefs, { barAt: 'top', barW: null, barRows: 1, barFold: false, splitAt: 0.5, nameW: 150 });
+  savePrefs();
+  setPref('ui', 1); setPref('text', 1);
+  for (const k of ['barAt', 'barW', 'layout']) applyPref(k);
+  for (const id of ['#bake', '#popup']) $(id).style.width = '';
+  $('#doc-name').style.flexBasis = '150px';
+  toast('The layout and scales are back to how they start.');
+}
+
 new ResizeObserver(layout).observe(stage);
 
 // ---- Start ----
-for (const k of ['snap', 'ui', 'text', 'varShow', 'graphDim', 'fadeStrength', 'exposure', 'shadows', 'navAt', 'units', 'windDir', 'theme', 'grid', 'gizmo', 'focus', 'toolGroups', 'wireColor', 'gizmoSize', 'sunYaw', 'navY2d', 'groundOn', 'barAt', 'glow', 'undoSteps', 'xfBox']) applyPref(k);
-if (prefs.backupOn) startQuietBackups();
+for (const k of ['snap', 'ui', 'text', 'varShow', 'graphDim', 'fadeStrength', 'exposure', 'shadows', 'navAt', 'units', 'windDir', 'theme', 'grid', 'gizmo', 'focus', 'toolGroups', 'wireColor', 'gizmoSize', 'sunYaw', 'navY2d', 'groundOn', 'barAt', 'glow', 'undoSteps', 'xfBox', 'statusOn', 'barW']) applyPref(k);
+if (prefs.backupOn) startBackups();
 if (prefs.aiBridge) startBridge(aiApi());
 // Wireframe was a look of its own before; Wiremesh shows the same edges.
 setShading(prefs.shading === 'wireframe' ? 'wiremesh' : prefs.shading);
@@ -1156,7 +1402,8 @@ layout();
   let saved = null;
   try { saved = await loadAutosave(); } catch (e) { console.warn('No automatic save available', e); }
   if (saved?.graph?.nodes?.length) await openGraph(saved.graph, saved.name || 'Untitled', saved.assets || {});
-  else { await openGraph({ nodes: [], links: [], groups: [], materials: [], settings: { seed: 1 } }, 'Untitled', {}); library.show(); }
+  else { await openGraph({ nodes: [], links: [], groups: [], materials: [], settings: { seed: 1 } }, 'Untitled', {}); if (prefs.welcome === false) library.show(); }
+  if (prefs.welcome !== false) showWelcome();
   resetHistory();
   $('#boot').remove();
   if (prefs.updateCheck) setTimeout(() => checkForUpdate({ auto: prefs.updateAuto, toast, okToLeave }), 4000);

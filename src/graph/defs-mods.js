@@ -4,8 +4,14 @@ import { num, int, bool, en, crv, data, vec } from './defs-helpers.js';
 const objectIn = { k: 'object', kind: 'object', side: 'left', l: 'Object' };
 const caps = ['none', 'planar', 'spherical'];
 
+// Modifiers that can work on part of the line only: between Start and End, where their curves then run from 0 to 1.
+export const RANGED = new Set(['Dir_Random', 'Dir_Vector', 'Dir_Noise', 'Dir_Spline', 'Dir_Droop', 'Dir_HardBend', 'Dir_Curl', 'Dir_Radial', 'Dir_Spiral', 'Dir_Zigzag']);
+const range = [
+  num('from', 'Start %', 0, { min: 0, max: 100, hint: 'Where along the line it starts working. Its curves run from here (left) to End (right).' }),
+  num('to', 'End %', 100, { min: 0, max: 100, hint: 'Where along the line it stops working. The rest of the line carries on the way it was turned.' }),
+];
 const modifier = (type, title, params, o = {}) => ({
-  type, title, cat: 'mod', chain: 'dir', params, ...o,
+  type, title, cat: 'mod', chain: 'dir', params: RANGED.has(type) ? [...range, ...params] : params, ...o,
   in: [{ k: 'in', kind: 'dir', side: 'top' }, ...(o.in || [])],
   out: [{ k: 'out', kind: 'dir', side: 'bottom' }],
 });
@@ -70,7 +76,8 @@ export const modDefs = [
   modifier('Dir_Curl', 'Curl', [
     num('turns', 'Turns', 1, { n: 1, c: 1, hint: 'How many full turns the line curls; below 0 it curls the other way. The curve sets where along the line it curls.' }),
     num('tighten', 'Tighten %', 60, { min: 0, max: 100, hint: 'Curls tighter toward the tip, like a fern bud.' }),
-    en('axis', 'Axis', 'side', ['side', 'x', 'y', 'z'], { hint: 'Side curls across the line itself; X, Y and Z curl around a world axis.' }),
+    en('axis', 'Axis', 'side', ['side', 'x', 'y', 'z'], { hint: 'Side curls across the line itself; X, Y and Z curl around an axis of the line (where it starts) or of the world.' }),
+    en('space', 'Axes', 'local', ['local', 'world'], { when: { axis: ['x', 'y', 'z'] }, hint: 'Local: the own axes of the line where it starts (X its side, Z the way it heads), so every line curls the same way round. World: the axes of the scene.' }),
     num('orient', 'Direction', 0, { unit: '°', n: 1, when: { axis: 'side' }, hint: 'Which way around the line it curls.' }),
     num('orientChaos', 'Variation direction', 0, { unit: '°', when: { axis: 'side' } }),
   ], { desc: 'Curls the line in on itself, tighter toward the tip.' }),
@@ -86,7 +93,8 @@ export const modDefs = [
   modifier('Dir_Spiral', 'Spiral', [
     num('radius', 'Radius', 15, { unit: 'cm', n: 1, c: 1 }),
     num('turn', 'Turn angle', 360, { unit: '°', n: 1 }),
-    en('axis', 'Axis', 'line', ['line', 'x', 'y', 'z'], { hint: 'Line coils around its own direction; X, Y and Z coil around a world axis.' }),
+    en('axis', 'Axis', 'line', ['line', 'x', 'y', 'z'], { hint: 'Line coils around its own direction; X, Y and Z coil around an axis of the line (where it starts) or of the world.' }),
+    en('space', 'Axes', 'local', ['local', 'world'], { when: { axis: ['x', 'y', 'z'] }, hint: 'Local: the own axes of the line where it starts, so every line coils the same way round. World: the axes of the scene.' }),
   ], { desc: 'Coils the line around its own direction or a world axis.' }),
   modifier('Dir_Zigzag', 'Zigzag', [
     num('angle', 'Angle', 25, { unit: '°', min: 0, max: 85, n: 1, c: 1, hint: 'How sharply each step turns off the line.' }),
@@ -122,13 +130,15 @@ export const modDefs = [
     bool('erase', 'Erase the whole line', false, { when: { mode: 'trim' } }),
   ], { after: true, in: [objectIn], desc: 'Lines meet the floor or a scene object: they lie along it, bounce off it or are trimmed where they touch.' }),
   modifier('Dir_Avoid', 'Avoid', [
-    en('mode', 'Do', 'push', ['push', 'trim', 'prune'], { hint: 'Push turns the line away where it meets another, and again each time it meets one; Trim cuts it where it first touches; Prune removes the whole line.' }),
+    en('mode', 'Do', 'bend', ['bend', 'push', 'trim', 'prune'], { hint: 'Bend turns the line away in a smooth curve where it meets another; Push moves its points aside; Trim cuts it where it first touches; Prune removes the whole line.' }),
     en('with', 'Against', 'everything', ['same node', 'other nodes', 'everything'], { hint: 'Same node: lines of this node only. Other nodes: lines of other nodes only.' }),
     num('clearance', 'Clearance', 8, { unit: 'cm', min: 0.1, n: 1, hint: 'Closer than this to another line counts as touching. Allow for the thickness of both lines.' }),
-    num('falloff', 'Falloff', 12, { unit: 'cm', min: 0, when: { mode: 'push' }, hint: 'From this far beyond the clearance it starts turning away.' }),
-    num('strength', 'Amount %', 100, { min: 0, max: 100, n: 1, c: 1, when: { mode: 'push' }, hint: 'How hard it turns away.' }),
+    num('falloff', 'Falloff', 12, { unit: 'cm', min: 0, when: { mode: ['bend', 'push'] }, hint: 'From this far beyond the clearance it starts to react.' }),
+    num('strength', 'Amount %', 100, { min: 0, max: 100, n: 1, c: 1, when: { mode: ['bend', 'push'] }, hint: 'How hard it turns or is pushed away.' }),
+    num('radius', 'Bend radius', 25, { unit: 'cm', min: 1, when: { mode: 'bend' }, hint: 'The tightest curve it turns away in: larger bends more gently.' }),
+    num('spread', 'Spread', 20, { unit: 'cm', min: 0, when: { mode: 'push' }, hint: 'Smooths the push along the line over this length, so it bends instead of kinking.' }),
     num('baseSkip', 'Ignore base', 10, { unit: 'cm', min: 0, hint: 'Near its base a line always touches its parent; this first stretch is left alone.' }),
-  ], { desc: 'Keeps lines from running into lines grown before them (other branches, or earlier ones of this part): turns them away, trims them, or removes them.' }),
+  ], { desc: 'Keeps lines from running into lines grown before them (other branches, or earlier ones of this part): bends them away, pushes them aside, trims them, or removes them.' }),
   modifier('Dir_VectorOrient', 'Vector orientation', [
     vec('vector', 'Vector', [0, 1, 0], { sock: false }),
     en('axis', 'Orient axis', 'y', ['x', 'y']),

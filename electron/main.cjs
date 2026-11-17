@@ -47,26 +47,45 @@ function stopBridge() {
 ipcMain.on('canopy:ai-bridge', (e, on) => { if (on) startBridge(); else stopBridge(); });
 ipcMain.on('canopy:ai-reply', (e, msg) => { const done = waiting.get(msg?.id); if (done) { waiting.delete(msg.id); done(msg); } });
 
-ipcMain.handle('canopy:save-as', async (e, name, text) => {
-  const res = await dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender), { defaultPath: name, filters: [{ name: 'Canopy plant', extensions: ['canopy'] }] });
-  if (res.canceled || !res.filePath) return false;
-  await fs.writeFile(res.filePath, text, 'utf8');
-  savedAs = res.filePath;
-  return true;
-});
+// The Canopy project folder in Documents: backups and temporary files live here, and saving starts here.
+const projectDir = () => path.join(app.getPath('documents'), 'Canopy');
+async function ensureProject() {
+  for (const sub of ['', 'Backups', 'Temp']) await fs.mkdir(path.join(projectDir(), sub), { recursive: true });
+  return projectDir();
+}
+const plain = (s, d) => String(s || '').replace(/[^\w\- ]+/g, '').trim() || d;
 
-ipcMain.handle('canopy:backup', async (e, when, text, docName) => {
-  // The stamp and name come from the page, so keep them to characters that can't leave the folder.
-  const safe = String(when).replace(/[^\w\- ]+/g, '');
-  if (!savedAs) {
-    // Before the first save, backups go to the app's own Backups folder.
-    const dir = path.join(app.getPath('userData'), 'Backups');
-    await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(path.join(dir, `${String(docName || 'Untitled').replace(/[^\w\- ]+/g, '') || 'Untitled'} ${safe}.canopy`), text, 'utf8');
-    return true;
-  }
-  const { dir, name, ext } = path.parse(savedAs);
-  await fs.writeFile(path.join(dir, `${name} ${safe}${ext}`), text, 'utf8');
+// Save writes over the open file; Save As (or a plant never saved) asks where, starting in the project folder.
+async function saveTo(e, name, as) {
+  if (savedAs && !as) return savedAs;
+  const res = await dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender), { defaultPath: savedAs && as ? savedAs : path.join(await ensureProject(), name), filters: [{ name: 'Canopy plant', extensions: ['canopy'] }] });
+  return res.canceled || !res.filePath ? null : res.filePath;
+}
+ipcMain.handle('canopy:save', async (e, name, text, as) => {
+  const p = await saveTo(e, name, as);
+  if (!p) return false;
+  await fs.writeFile(p, text, 'utf8');
+  savedAs = p;
+  return path.basename(p);
+});
+// Kept for older pages: always asks.
+ipcMain.handle('canopy:save-as', async (e, name, text) => {
+  const p = await saveTo(e, name, true);
+  if (!p) return false;
+  await fs.writeFile(p, text, 'utf8');
+  savedAs = p;
+  return path.basename(p);
+});
+// The open file: a path when one was opened from disk, or nothing for a new plant.
+ipcMain.on('canopy:set-current', (e, p) => { savedAs = p && /\.canopy$/i.test(String(p)) ? String(p) : null; });
+ipcMain.handle('canopy:project-dir', () => ensureProject());
+
+// Backups go to the project's Backups folder: Canopy-YYMMDD_HHMM before the first save, <file>_YYMMDD_HHMM after.
+ipcMain.handle('canopy:backup', async (e, when, text) => {
+  const stamp = String(when).replace(/[^\w\-]+/g, '');
+  const base = savedAs ? plain(path.parse(savedAs).name, 'Canopy') : 'Canopy';
+  const dir = path.join(await ensureProject(), 'Backups');
+  await fs.writeFile(path.join(dir, `${base}${savedAs ? '_' : '-'}${stamp}.canopy`), text, 'utf8');
   return true;
 });
 
@@ -123,19 +142,19 @@ ipcMain.handle('canopy:update', async (e, url) => {
 });
 
 // Saving with textures beside the file: the .canopy, then a textures folder next to it.
-ipcMain.handle('canopy:save-package', async (e, name, text, files) => {
-  const res = await dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender), { defaultPath: name, filters: [{ name: 'Canopy plant', extensions: ['canopy'] }] });
-  if (res.canceled || !res.filePath) return false;
-  await fs.writeFile(res.filePath, text, 'utf8');
-  savedAs = res.filePath;
-  const dir = path.dirname(res.filePath);
+ipcMain.handle('canopy:save-package', async (e, name, text, files, as) => {
+  const p = await saveTo(e, name, as);
+  if (!p) return false;
+  await fs.writeFile(p, text, 'utf8');
+  savedAs = p;
+  const dir = path.dirname(p);
   for (const f of files || []) {
     // Names come from the page: only textures/<plain name>.<picture> lands, inside that folder.
     if (!/^textures\/[\w ().-]+\.(png|jpe?g|webp|bin)$/i.test(String(f?.name))) continue;
     await fs.mkdir(path.join(dir, 'textures'), { recursive: true });
     await fs.writeFile(path.join(dir, f.name), Buffer.from(f.data));
   }
-  return true;
+  return path.basename(p);
 });
 
 // A picture a file points at, as a data URL: an absolute path, or one relative to the file's folder.

@@ -1,34 +1,24 @@
-// Saving backups while you work. The desktop app writes dated files beside the first save; the web version downloads them.
+// Backups while you work: every few minutes, while the plant changes, a dated copy goes to the Canopy project folder.
+// A plant never saved is Canopy-YYMMDD_HHMM.canopy; a saved one is <its name>_YYMMDD_HHMM.canopy.
 export const stamp = (d = new Date()) => {
   const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+  return `${String(d.getFullYear()).slice(2)}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
 };
 
-export function makeBackups({ text, download, name, toast, app = globalThis.canopyApp }) {
+export const backupName = (saved, name, when = stamp()) => (saved ? `${name}_${when}.canopy` : `Canopy-${when}.canopy`);
+
+// write(fileName, stampText, body) puts it wherever this platform keeps backups.
+export function makeBackups({ text, write, toast }) {
   let timer = 0;
   let last = '';
-  // With a store, backups go there quietly instead of beside a first save.
-  let quiet = null;
-
-  async function firstSave() {
-    const body = text();
-    if (app) {
-      const saved = await app.saveAs(`${name()}.canopy`, body);
-      if (!saved) return false;
-    } else download(`${name()}.canopy`, body);
-    last = body;
-    return true;
-  }
 
   async function tick() {
     const body = text();
     // Nothing new since the last one means no pile of identical files.
     if (body === last) return;
-    last = body;
     try {
-      if (quiet) { await quiet(stamp(), body); return; }
-      if (app) await app.backup(stamp(), body, name());
-      else download(`${name()} ${stamp()}.canopy`, body);
+      if (await write(stamp(), body) === false) return;
+      last = body;
       toast(`Backup saved at ${new Date().toLocaleTimeString()}.`, 1800);
     } catch (e) {
       console.error(e);
@@ -37,23 +27,11 @@ export function makeBackups({ text, download, name, toast, app = globalThis.cano
   }
 
   return {
-    startQuiet(minutes, store) {
-      quiet = store;
+    start(minutes) {
       clearInterval(timer);
       timer = setInterval(tick, Math.max(0.25, minutes) * 60000);
     },
-    async start(minutes) {
-      if (!await firstSave()) return false;
-      quiet = null;
-      clearInterval(timer);
-      timer = setInterval(tick, Math.max(0.25, minutes) * 60000);
-      return true;
-    },
-    setInterval(minutes) {
-      if (!timer) return;
-      clearInterval(timer);
-      timer = setInterval(tick, Math.max(0.25, minutes) * 60000);
-    },
+    setInterval(minutes) { if (timer) this.start(minutes); },
     stop() { clearInterval(timer); timer = 0; },
     running: () => !!timer,
     tick,

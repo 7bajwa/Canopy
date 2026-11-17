@@ -13,6 +13,9 @@ import { showLength, parseLength } from './units.js';
 
 let serial = 0;
 
+// A value's variation mode: as set on it, or Absolute for values that sit at 0 (angles, offsets), else Percent.
+export const varyModeOf = (owner, param) => owner.varyMode?.[param.k] ?? (param.abs ? 'abs' : 'pct');
+
 // A cutout as a small picture with a check box, so a node can pick flowers, leaves or stems from one atlas.
 function cutThumb(m, c, on, fn, pos) {
   const box = el('label', `cut-thumb${on ? ' on' : ''}`);
@@ -99,20 +102,31 @@ export function makeEditors(ui) {
   };
 
   const edit = {
-    // The variation slider: plus and minus an amount, or a percent of the value.
+    // The variation slider: Percent varies by a share of the value, Absolute by up to that amount (works at 0 too).
     vary(p, node, owner, param) {
       const set = (v, draft) => setRowValue(node, owner, 'vary', { ...owner.vary, [param.k]: v }, { draft });
-      const max = param.abs || 100;
-      const unit = param.abs ? param.unit || '' : '%';
-      const slider = el('input', 'slider');
-      slider.type = 'range'; slider.min = 0; slider.max = max; slider.step = max <= 2 ? 0.01 : 1;
-      slider.value = owner.vary?.[param.k] || 0;
-      slider.setAttribute('aria-label', `${param.l} variation`);
-      const text = () => `± ${slider.value}${unit ? ` ${unit}` : ''}`;
-      const label = el('output', 'slider-value', text());
-      slider.addEventListener('input', () => { label.textContent = text(); set(+slider.value, true); });
-      slider.addEventListener('change', () => { set(+slider.value, false); commit(); });
-      open(p, `${param.l}: variation`, [slider, label]);
+      const draw = () => {
+        const mode = varyModeOf(owner, param);
+        const abs = mode === 'abs';
+        const max = abs ? param.abs || Math.max(10, Math.abs(+owner[param.k] || 0) * 2, +param.max || 0) : 100;
+        const unit = abs ? param.unit || '' : '%';
+        const modes = el('div', 'seg-row');
+        for (const [m, l, t] of [['pct', 'Percent', 'A share of the value: nothing happens at 0'], ['abs', 'Absolute', 'Plus and minus this amount, even at 0']]) {
+          const b = el('button', 'mini', l); b.title = t; b.setAttribute('aria-pressed', m === mode);
+          b.addEventListener('click', () => { setRowValue(node, owner, 'varyMode', { ...owner.varyMode, [param.k]: m }); commit(); draw(); });
+          modes.append(b);
+        }
+        const slider = el('input', 'slider');
+        slider.type = 'range'; slider.min = 0; slider.max = max; slider.step = max <= 2 ? 0.01 : max <= 20 ? 0.1 : 1;
+        slider.value = owner.vary?.[param.k] || 0;
+        slider.setAttribute('aria-label', `${param.l} variation`);
+        const text = () => `± ${slider.value}${unit ? ` ${unit}` : ''}`;
+        const label = el('output', 'slider-value', text());
+        slider.addEventListener('input', () => { label.textContent = text(); set(+slider.value, true); });
+        slider.addEventListener('change', () => { set(+slider.value, false); commit(); });
+        open(p, `${param.l}: variation`, [modes, slider, label]);
+      };
+      draw();
     },
 
     // The curve graph, for this value at any level of its chain.

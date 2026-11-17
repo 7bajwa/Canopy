@@ -108,6 +108,22 @@ test('an offset of 0 can still vary, since a share of 0 would do nothing', () =>
   assert.notEqual(uv({ offsetU: 80 }), uv({}));
 });
 
+test('variation is a share in Percent and an amount in Absolute, which still works at 0', () => {
+  const uv = (vary, varyMode) => bark(build(graph([node('Spline', { count: 6, length: 50, offsetU: 0, vary, varyMode })]))).uv.slice(0, 200).join();
+  assert.equal(uv({ offsetU: 80 }, { offsetU: 'pct' }), uv({}), 'a percent of 0 is 0');
+  assert.notEqual(uv({ offsetU: 80 }, { offsetU: 'abs' }), uv({}));
+  const tops = (vary, varyMode) => {
+    const s = node('Spline', { count: 8, length: 100, vary, varyMode });
+    const { position: P, lineId, owner, nodeIds } = build(graph([s])).lines;
+    const top = new Map();
+    for (let i = 0; i < owner.length; i++) if (nodeIds[owner[i]] === s.id) top.set(lineId[i], Math.max(top.get(lineId[i]) ?? 0, P[i * 3 + 1]));
+    return [...top.values()];
+  };
+  const abs = tops({ length: 5 }, { length: 'abs' });
+  assert.ok(Math.max(...abs) <= 105.5 && Math.min(...abs) >= 94.5, 'plus and minus 5 length units, not 5%');
+  assert.ok(Math.max(...abs) - Math.min(...abs) > 1);
+});
+
 test('primitives are closed, face outward and react to their modifiers', () => {
   const outward = (o) => {
     let agree = 0; let total = 0;

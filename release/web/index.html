@@ -10,19 +10,21 @@
 <link rel="icon" href="./icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="./icon-192.png">
 <title>Canopy - A Foliage Maker</title>
-  <script type="module" crossorigin src="./assets/index-BV6RcfYp.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-Bc3fh4Dp.css">
+  <script type="module" crossorigin src="./assets/index-DDDiwPKO.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-BvI35v4V.css">
 </head>
 <body>
 <header id="bar">
-  <a class="brand" href="https://7bajwa.github.io/" target="_blank" rel="noopener" title="7bajwa.github.io"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="#7fc241" d="M12 2C6 6 4 11 6 16c1.4-3.6 3.5-6 6-8-1.8 2.7-3 6-3 10v4h3v-5c5.6.4 8.6-5 7-15-1.6 1-4.5 1.2-7 0z"/></svg></a>
+  <button class="brand" data-fold title="Fold the toolbar into the leaf. Click again to open it" aria-label="Canopy" aria-expanded="true"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="#7fc241" d="M12 2C6 6 4 11 6 16c1.4-3.6 3.5-6 6-8-1.8 2.7-3 6-3 10v4h3v-5c5.6.4 8.6-5 7-15-1.6 1-4.5 1.2-7 0z"/></svg></button>
   <input id="doc-name" aria-label="Plant name" value="">
+  <span id="doc-grip" role="separator" aria-orientation="vertical" aria-label="Name width" title="Drag to resize the name; drag it all the way left to hide it. Double-click to show or hide it."></span>
   <nav class="tools" aria-label="Tools">
     <div class="group" data-group="file" data-label="File">
       <button data-act="new" title="New" aria-label="New"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v4h4"/></svg></button>
       <button data-act="open" title="Open" aria-label="Open" aria-haspopup="menu"><svg viewBox="0 0 24 24"><path d="M3 19V6h6l2 2h8v3M3 19l3-8h16l-3 8z"/></svg></button>
-      <button data-act="save" title="Save (Ctrl+S)" aria-label="Save"><svg viewBox="0 0 24 24"><path d="M5 3h12l3 3v15H5zM8 3v6h8V3M8 21v-7h9v7"/></svg></button>
-      <button data-act="backup" title="Backup: lit while backups are being kept" aria-label="Backup" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M5 3h12l3 3v15H5zM8 3v6h8V3"/><path d="M8 15a4 4 0 017-2.5M16 16a4 4 0 01-7 2.5M15 10v3h-3M9 22v-3h3"/></svg></button>
+      <button data-act="save" title="Save: write over the open file (Ctrl+S)" aria-label="Save"><svg viewBox="0 0 24 24"><path d="M5 3h12l3 3v15H5zM8 3v6h8V3M8 21v-7h9v7"/></svg></button>
+      <button data-act="saveAs" title="Save As: a new name or place (Ctrl+Shift+S)" aria-label="Save As"><svg viewBox="0 0 24 24"><path d="M5 3h12l3 3v6M5 3v18h7M8 3v6h8V3"/><path d="M14 21l1-3 5-5 2 2-5 5z"/></svg></button>
+      <button data-act="backup" title="Backup: lit while a backup is saved every few minutes" aria-label="Backup" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M5 3h12l3 3v15H5zM8 3v6h8V3"/><path d="M8 15a4 4 0 017-2.5M16 16a4 4 0 01-7 2.5M15 10v3h-3M9 22v-3h3"/></svg></button>
       <button data-act="import" title="Import (OBJ, FBX, GLB) as a Mesh node" aria-label="Import"><svg viewBox="0 0 24 24"><path d="M12 3v11M8 10l4 4 4-4M4 16v5h16v-5"/></svg></button>
       <button data-act="export" title="Export (GLB, FBX, OBJ)" aria-label="Export"><svg viewBox="0 0 24 24"><path d="M12 15V4M8 8l4-4 4 4M4 16v5h16v-5"/></svg></button>
     </div>
@@ -82,6 +84,7 @@
       <button data-act="pack" title="Texture Pack" aria-label="Texture Pack"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 12h9V3M12 16h9M16 12v9"/></svg></button>
     </div>
   </nav>
+  <span class="bar-size" title="Drag to resize the toolbar: sideways for its length, down for more rows" aria-hidden="true"></span>
   <div class="bar-end">
     <button data-act="prefs" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24"><path d="M10.300 3h3.400l.5 2.500 1.800.8 2.200-1.400 2.400 2.400-1.400 2.200.8 1.800 2.500.5v3.400l-2.500.5-.8 1.800 1.400 2.200-2.400 2.400-2.200-1.400-1.800.8-.5 2.500h-3.400l-.5-2.500-1.800-.8-2.200 1.400-2.400-2.400 1.400-2.200-.8-1.800L1.500 13.700v-3.400L4 9.800l.8-1.800-1.400-2.200 2.400-2.400 2.200 1.400 1.800-.8z" transform="translate(-.3 -.3) scale(1.02)"/><circle cx="12" cy="12" r="3"/></svg></button>
     <a class="btn" href="./docs/index.html" target="_blank" title="Help: the node reference" aria-label="Help"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.500 9a2.500 2.500 0 114 2c-1 .7-1.500 1.200-1.500 2.500M12 17h.01"/></svg></a>
@@ -103,7 +106,6 @@
     <button data-nav="g-zoom" title="Zoom the graph: tap, or drag this icon up and down" aria-label="Zoom the graph"><svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6.5"/><path d="M15 15l6 6M10 7v6M7 10h6"/></svg></button>
     <button data-nav="g-frame" title="Frame the whole graph" aria-label="Frame the graph"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
     <button data-nav="g-focus" title="Graph in front: the mouse moves only the graph; the plant moves by its icons" aria-label="Graph in front" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg></button>
-    <button data-nav="g-del" title="Delete the selected node or wire" aria-label="Delete" hidden><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button>
   </div>
   <div id="nav3d" class="nav" role="group" aria-label="Move the 3D view">
     <div class="nav-grip" title="Drag to move this bar up or down" aria-hidden="true"></div>
@@ -120,6 +122,7 @@
 </main>
 
 <footer id="status">
+  <span id="hint" hidden></span>
   <span id="zone"></span>
   <span id="warn" hidden></span>
   <span id="building" hidden>Building…</span>
@@ -191,13 +194,32 @@
     </div>
   </div>
 </section>
-<section id="backup" role="dialog" aria-label="Keep saving backups" hidden>
+<section id="ask" role="dialog" aria-label="Question" hidden>
   <div class="settings-card">
-    <h2>Keep saving backups</h2>
-    <p>Save the file now, and a dated copy is saved every few minutes while the plant changes. You can set how often in Settings.</p>
-    <div class="row-buttons">
-      <button class="wide" data-close>Close</button>
-      <button class="wide primary" data-save>Save</button>
+    <h2></h2>
+    <p></p>
+    <div class="row-buttons"></div>
+  </div>
+</section>
+<section id="welcome" role="dialog" aria-label="Welcome to Canopy" hidden>
+  <div class="settings-card welcome-card">
+    <div class="welcome-head">
+      <svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true"><path fill="#7fc241" d="M12 2C6 6 4 11 6 16c1.4-3.6 3.5-6 6-8-1.8 2.7-3 6-3 10v4h3v-5c5.6.4 8.6-5 7-15-1.6 1-4.5 1.2-7 0z"/></svg>
+      <div><h2>Canopy</h2><p class="welcome-sub">A node-based foliage creator</p><p class="welcome-tag">From an artist, for the artists</p></div>
+      <button class="mini welcome-x" data-close title="Close" aria-label="Close">✕</button>
+    </div>
+    <p class="welcome-about">Canopy is an intuitive, minimal and lightweight tool for node-based procedural foliage. It works on every device, online and offline once loaded, with builds for Windows and Android.</p>
+    <div class="welcome-grid">
+      <button class="wide primary" data-w="new">New plant</button>
+      <button class="wide" data-w="library">Library</button>
+      <button class="wide" data-w="open">Open a file</button>
+      <a class="wide btn" href="./docs/index.html" target="_blank" rel="noopener">Documentation</a>
+      <a class="wide btn" href="https://github.com/7bajwa/Canopy" target="_blank" rel="noopener">About Canopy</a>
+      <a class="wide btn" href="https://7bajwa.github.io/" target="_blank" rel="noopener">About Amanpreet</a>
+    </div>
+    <div class="welcome-foot">
+      <label class="field check"><input type="checkbox" data-w-start><span>Show at start</span></label>
+      <a class="welcome-by" href="https://github.com/7bajwa" target="_blank" rel="noopener" title="Amanpreet Bajwa on GitHub">Created with passion and AI by <b>Amanpreet Bajwa</b></a>
     </div>
   </div>
 </section>

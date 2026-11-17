@@ -23,23 +23,50 @@ export const documentText = () => JSON.stringify({ app: 'canopy', version: 1, na
 //   folder: beside it, in a textures folder; the PC app writes the folder itself, a browser saves a .zip of both.
 //   linked: left where they are on this computer, the file keeps their paths (PC app only; a browser packs them).
 // thumb: a small picture of the plant, kept in the file.
-export async function saveDocument(textures = 'embed', thumb = null) {
+// as: Save As (always ask where). Save writes over the open file where the platform can: the PC app, a browser
+// that lets a page keep a file it saved, or the tablet's Documents/Canopy folder.
+let handle = null;
+export const forgetFile = () => { handle = null; window.canopyApp?.setCurrent?.(null); };
+export const fileIsOpen = () => !!handle;
+const fsPlugin = () => window.Capacitor?.isNativePlatform?.() && window.Capacitor.Plugins?.Filesystem;
+// A file on the tablet, under Documents/Canopy.
+export async function writeTablet(path, text) {
+  const F = fsPlugin();
+  if (!F) return false;
+  // A tablet that refuses (no permission) falls back to the browser's way of saving.
+  try { await F.writeFile({ path: `Canopy/${path}`, data: text, directory: 'DOCUMENTS', encoding: 'utf8', recursive: true }); return true; } catch (e) { console.warn('Documents/Canopy not writable', e); return false; }
+}
+async function writeText(name, text, as) {
+  const app = window.canopyApp;
+  if (app?.save) return app.save(name, text, as);
+  if (app?.saveAs) return app.saveAs(name, text);
+  if (fsPlugin() && await writeTablet(name, text)) return name;
+  if (window.showSaveFilePicker) {
+    try {
+      if (as || !handle) handle = await window.showSaveFilePicker({ suggestedName: name, startIn: 'documents', types: [{ description: 'Canopy plant', accept: { 'application/json': ['.canopy'] } }] });
+      const w = await handle.createWritable(); await w.write(text); await w.close();
+      return handle.name;
+    } catch (e) { if (e?.name === 'AbortError') return false; handle = null; }
+  }
+  download(name, new Blob([text], { type: 'application/json' }));
+  return true;
+}
+
+export async function saveDocument(textures = 'embed', thumb = null, as = false) {
   const name = safeName(doc.name);
   const app = window.canopyApp;
   const head = { app: 'canopy', version: 1, name: doc.name, ...(thumb ? { thumb } : {}) };
   if (textures === 'folder') {
     const { assets, files } = documentPackage();
     const text = JSON.stringify({ ...head, graph: doc.graph, assets });
-    if (app?.savePackage) return app.savePackage(`${name}.canopy`, text, files);
+    if (app?.savePackage) return app.savePackage(`${name}.canopy`, text, files, as);
     download(`${name}.zip`, new Blob([zipStore([{ name: `${name}.canopy`, data: text }, ...files])], { type: 'application/zip' }));
     return true;
   }
   const linked = textures === 'linked' && app;
   const assets = linked ? Object.fromEntries(Object.entries(doc.assets || {}).map(([id, a]) => [id, a.path ? { name: a.name, path: a.path } : a])) : doc.assets;
   const text = JSON.stringify({ ...head, graph: doc.graph, assets });
-  if (app?.saveAs) return app.saveAs(`${name}.canopy`, text);
-  download(`${name}.canopy`, new Blob([text], { type: 'application/json' }));
-  return true;
+  return writeText(`${name}.canopy`, text, as);
 }
 
 // Where a picked picture lives on this computer (PC app only), so a file can point at it instead of packing it.

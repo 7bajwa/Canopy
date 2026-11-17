@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluate } from '../src/engine/evaluate.js';
+import { evaluate, Evaluator } from '../src/engine/evaluate.js';
 import { defaultParams } from '../src/graph/schema.js';
 import { makeShape } from '../src/engine/shapes.js';
 import { layerPoints } from '../src/engine/placement.js';
@@ -109,4 +109,73 @@ test('children start on the parent surface when asked, at its center line when n
   const off = (on) => { const list = starts(g(on), 'b'); assert.ok(list.length > 2); return list.reduce((s, [p]) => s + Math.hypot(p[0], p[2]), 0) / list.length; };
   assert.ok(off(false) < 0.5, `center ${off(false)}`);
   assert.ok(off(true) > 3, `surface ${off(true)}`);
+});
+
+test('Follow parent scale gives a part the size its parent was given', () => {
+  const down = { pts: [[0, 1, 's'], [1, 0.1, 's']] };
+  const T = node('t', 'Spline', { meshType: 'none', length: 300 });
+  const B = node('b', 'Spline', { meshType: 'none', length: 100, place: 'spline', count: 6, tipOn: false, curves: { scale: down } });
+  const sizes = (follow) => {
+    const L = node('l', 'Spline', { meshType: 'none', length: 10, place: 'spline', count: 2, tipOn: false, scaleParent: follow });
+    const ev = new Evaluator({ nodes: [T, B, L], links: [{ id: 'a', from: 't', fromSock: 'children', to: 'b', toSock: 'parent' }, { id: 'c', from: 'b', fromSock: 'children', to: 'l', toSock: 'parent' }], groups: [], settings: { seed: 1 } });
+    ev.run();
+    return ev.lines.filter((x) => x.node.id === 'l#path').map((x) => [x.sizeScale, x.parent.sizeScale]);
+  };
+  assert.ok(sizes(0).every(([s]) => Math.abs(s - 1) < 1e-6), 'off, every part keeps its own size');
+  assert.ok(sizes(100).every(([s, p]) => Math.abs(s - p) < 1e-6) && sizes(100).some(([s]) => s < 0.9), 'at 100 it matches its parent');
+});
+
+test('Spline placement by Count puts that many on each parent, and its curves run from Start to End', () => {
+  const up = { pts: [[0, 0.1, 'l'], [1, 1, 'l']] };
+  const T = node('t', 'Spline', { meshType: 'none', length: 300 });
+  const B = node('b', 'Spline', { meshType: 'none', length: 100, place: 'spline', amountBy: 'count', splineCount: 4, start: 20, end: 60, tipOn: false, curves: { scale: up } });
+  const ev = new Evaluator({ nodes: [T, B], links: [{ id: 'a', from: 't', fromSock: 'children', to: 'b', toSock: 'parent' }], groups: [], settings: { seed: 1 } });
+  ev.run();
+  const L = ev.lines.filter((x) => x.node.id === 'b#path');
+  assert.equal(L.length, 4);
+  assert.ok(L.every((l) => l.parentS >= 60 - 1e-6 && l.parentS <= 180 + 1e-6), 'all between Start and End');
+  const s = L.map((l) => l.sizeScale).sort((a, b) => a - b);
+  assert.ok(s[0] < 0.35 && s[3] > 0.8, `the curve spans the whole placed stretch (got ${s.map((v) => v.toFixed(2))})`);
+});
+
+test('every generator hands its entities a factor from first to last, which own curves read', () => {
+  const up = { pts: [[0, 0.2, 'l'], [1, 1, 'l']] };
+  const lens = (params) => {
+    const s = node('s', 'Spline', { meshType: 'none', length: 100, curves: { length: up }, ...params });
+    const ev = new Evaluator({ nodes: [s], links: [], groups: [], settings: { seed: 1 } }); ev.run();
+    return ev.lines.filter((l) => l.node.id === 's#path').map((l) => l.length);
+  };
+  for (const p of [{ place: 'point', count: 5 }, { place: 'line', count: 5 }, { place: 'ring', count: 5 }, { place: 'grid', gridX: 3, gridZ: 2 }, { place: 'urchin', count: 5, sproutStart: 40, sproutEnd: 60 }]) {
+    const L = lens(p);
+    assert.ok(Math.min(...L) < 30 && Math.max(...L) > 95, `${p.place}: lengths run the whole curve (got ${L.map((v) => v.toFixed(0))})`);
+  }
+});
+
+test('a curve along the parent reads the parent\'s own factor: petals on urchin stems open by stem', () => {
+  const up = { pts: [[0, 0, 'l'], [1, 1, 'l']] };
+  const stems = node('st', 'Spline', { meshType: 'none', length: 50, place: 'urchin', count: 5 });
+  const petals = node('pe', 'Spline', { meshType: 'none', length: 10, place: 'ring', count: 4, tilt: 80, curves: { 'tilt@st': up } });
+  const ev = new Evaluator({ nodes: [stems, petals], links: [{ id: 'a', from: 'st', fromSock: 'children', to: 'pe', toSock: 'parent' }], groups: [], settings: { seed: 1 } });
+  ev.run();
+  // How far each petal leans off its stem, grouped by stem in stem order.
+  const lean = (l) => { const T = l.parent; const n = T.n - 1; const a = [T.pts[n * 3] - T.pts[n * 3 - 3], T.pts[n * 3 + 1] - T.pts[n * 3 - 2], T.pts[n * 3 + 2] - T.pts[n * 3 - 1]]; const d = [l.pts[3] - l.pts[0], l.pts[4] - l.pts[1], l.pts[5] - l.pts[2]]; return Math.acos((a[0] * d[0] + a[1] * d[1] + a[2] * d[2]) / (Math.hypot(...a) * Math.hypot(...d))); };
+  const P = ev.lines.filter((l) => l.node.id === 'pe#path');
+  const byStem = new Map(); for (const l of P) byStem.set(l.parent.pos, lean(l));
+  const keys = [...byStem.keys()].sort((a, b) => a - b);
+  assert.ok(byStem.get(keys[0]) < 0.1, 'the first stem keeps its petals closed');
+  assert.ok(byStem.get(keys.at(-1)) > 1.2, 'the last opens them wide');
+});
+
+test('Align with parent turns a child square to its parent, like an umbrella rib, at any angle of the parent', () => {
+  const T = node('t', 'Spline', { meshType: 'none', length: 100, rotX: 50 });
+  const run = (alignWith) => {
+    const C = node('c', 'Spline', { meshType: 'none', length: 20, place: 'spline', amountBy: 'count', splineCount: 3, tipOn: false, tilt: 60, alignWith });
+    const ev = new Evaluator({ nodes: [T, C], links: [{ id: 'a', from: 't', fromSock: 'children', to: 'c', toSock: 'parent' }], groups: [], settings: { seed: 1 } });
+    ev.run();
+    const P = ev.lines.find((l) => l.node.id === 't#path'); const a = [P.pts[3] - P.pts[0], P.pts[4] - P.pts[1], P.pts[5] - P.pts[2]];
+    const n = Math.hypot(...a);
+    return ev.lines.filter((l) => l.node.id === 'c#path').map((l) => (l.upHint[0] * a[0] + l.upHint[1] * a[1] + l.upHint[2] * a[2]) / n);
+  };
+  assert.ok(run(true).every((v) => Math.abs(v) < 1e-3), 'on: each side is square to the parent');
+  assert.ok(run(false).some((v) => Math.abs(v) > 0.05), 'off: sides lie level, not square to a leaning parent');
 });

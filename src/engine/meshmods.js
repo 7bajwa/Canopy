@@ -616,8 +616,8 @@ export function applyMeshMods(m, mods, images, center = [0, 0, 0]) {
       else if (mod.type === 'remesh') remesh(m, { res: +P.resolution || 64, quads: P.quads !== false, snap: Math.min(1, Math.max(0, +(P.snap ?? 0.5))) });
       else {
         thicken(m, {
-          amount: +(P.amount ?? 0.1), pinch: +(P.pinch ?? 0.5), profile: P.profile, both: P.both !== false, pinchCurve: P.curves?.pinch, pinchVary: (+P.vary?.pinch || 0) / 100,
-          amountCurve: P.curves?.amount, amountVary: (+P.vary?.amount || 0) / 100,
+          amount: +(P.amount ?? 0.1), pinch: +(P.pinch ?? 0.5), profile: P.profile, both: P.both !== false, pinchCurve: P.curves?.pinch, pinchVary: varyShare(P, 'pinch', +(P.pinch ?? 0.5)),
+          amountCurve: P.curves?.amount, amountVary: varyShare(P, 'amount', +(P.amount ?? 0.1)),
           // Modifiers saved before the side settings keep measuring from the outline.
           measure: P.measure || 'outline', sidePinch: +(P.sidePinch ?? 0), sideWidth: Math.max(0.01, +(P.sideWidth ?? 0.35)), upper: P.upper, lower: P.lower,
         });
@@ -708,10 +708,16 @@ function partsOf(m) {
 
 // Crumple: folds, curled corners and wrinkles on each leaf or card, growing from 0 at its base so the stem point
 // stays put. Each point moves by its position alone, so points that share a place stay together.
+// A modifier value's variation as a share of the value: Percent as it is, Absolute turned into the share it makes.
+const varyShare = (P, k, base) => {
+  const v = +P.vary?.[k] || 0;
+  return P.varyMode?.[k] === 'abs' ? (Math.abs(base) > 1e-9 ? v / Math.abs(base) : 0) : v / 100;
+};
+
 export function crumple(m, P = {}) {
   const V = m.position; const N = m.normal; const W = m.wind; const nv = V.length / 3;
   const amount = +(P.amount ?? 0.5); const curl = +P.curl || 0; const wr = +P.wrinkle || 0; const ws = Math.max(0.1, +P.wrinkleScale || 2);
-  const seed = Math.round(+P.seed || 0); const vary = (+P.vary?.amount || 0) / 100; const curve = P.curves?.amount ? bakeCurve(P.curves.amount) : null;
+  const seed = Math.round(+P.seed || 0); const vary = varyShare(P, 'amount', +(P.amount ?? 0.5)); const curve = P.curves?.amount ? bakeCurve(P.curves.amount) : null;
   if (!nv || !(amount || vary || curl || wr)) return false;
   const wind = W && W.length >= nv * 3;
   // Without wind data, parts are joined across UV seams too (by place), so a seam cannot tear open.
@@ -856,15 +862,16 @@ export function avoidMesh(m, meshes, P) {
     };
     const norm = (x) => { const l = Math.hypot(...x); return l > 1e-9 ? x.map((y) => y / l) : null; };
     // Turns (around `axis` through `o`) or slides (along `n`) one point; dir: true for a direction (no slide).
-    const move = (T, x, y, z, dir) => {
-      if (T.shift !== undefined) return dir ? [x, y, z] : [x + T.n[0] * T.shift, y + T.n[1] * T.shift, z + T.n[2] * T.shift];
+    // A slide fades from nothing at the base to full at the tip (by `al`, how far along), so the joint stays put.
+    const move = (T, x, y, z, dir, al = 1) => {
+      if (T.shift !== undefined) { const f = T.shift * Math.min(1, Math.max(0, (al - T.a0) / T.span)); return dir ? [x, y, z] : [x + T.n[0] * f, y + T.n[1] * f, z + T.n[2] * f]; }
       const k = T.axis; const c = Math.cos(T.ang); const s = Math.sin(T.ang);
       const v = dir ? [x, y, z] : [x - T.o[0], y - T.o[1], z - T.o[2]];
       const d = k[0] * v[0] + k[1] * v[1] + k[2] * v[2];
       const r = [0, 1, 2].map((i) => v[i] * c + (k[(i + 1) % 3] * v[(i + 2) % 3] - k[(i + 2) % 3] * v[(i + 1) % 3]) * s + k[i] * d * (1 - c));
       return dir ? r : [r[0] + T.o[0], r[1] + T.o[1], r[2] + T.o[2]];
     };
-    const moved = (pts, T) => { const o = pts.slice(); for (let i = 0; i < o.length; i += 4) { const q = move(T, pts[i], pts[i + 1], pts[i + 2], false); o[i] = q[0]; o[i + 1] = q[1]; o[i + 2] = q[2]; } return o; };
+    const moved = (pts, T) => { const o = pts.slice(); for (let i = 0; i < o.length; i += 4) { const q = move(T, pts[i], pts[i + 1], pts[i + 2], false, pts[i + 3]); o[i] = q[0]; o[i + 1] = q[1]; o[i + 2] = q[2]; } return o; };
     let changed = 0;
     members.forEach((list, p) => {
       let pts = S[p];
@@ -874,7 +881,12 @@ export function avoidMesh(m, meshes, P) {
       const n = norm(ns) || [0, 1, 0];
       let [best, away] = hits(pts, p, Infinity, n);
       if (best) {
-        const o = [V[lo * 3], V[lo * 3 + 1], V[lo * 3 + 2]];
+        // Pivot at the middle of the base (every point near the lowest along), so a tube's ring or a card's edge
+        // turns about its joint rather than about one corner.
+        const a0 = own.along[lo]; const span = Math.max(1e-6, own.along[hi] - a0);
+        const o = [0, 0, 0]; let nb = 0;
+        for (const v of list) if (own.along[v] <= a0 + span * 0.02) { o[0] += V[v * 3]; o[1] += V[v * 3 + 1]; o[2] += V[v * 3 + 2]; nb++; }
+        for (let s = 0; s < 3; s++) o[s] /= nb;
         const a = norm([V[hi * 3] - o[0], V[hi * 3 + 1] - o[1], V[hi * 3 + 2] - o[2]]) || (Math.abs(n[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0]);
         const w = norm([a[1] * n[2] - a[2] * n[1], a[2] * n[0] - a[0] * n[2], a[0] * n[1] - a[1] * n[0]]) || [1, 0, 0];
         // Turning around w by a positive angle lifts the tip toward +n, so the first try goes the way it already leans.
@@ -883,11 +895,11 @@ export function avoidMesh(m, meshes, P) {
         const tryT = (T) => { const c = hits(moved(pts, T), p, best)[0]; if (c < best) { best = c; pick = T; } };
         for (let k = 1; k <= 6 && best; k++) {
           if (maxA > 0) for (const [axis, sg] of [[w, s0], [w, -s0], [a, 1], [a, -1]]) if (best) tryT({ axis, o, ang: (sg * maxA * k) / 6 });
-          if (slide > 0) for (const sg of [s0, -s0]) if (best) tryT({ shift: (sg * slide * k) / 6, n });
+          if (slide > 0) for (const sg of [s0, -s0]) if (best) tryT({ shift: (sg * slide * k) / 6, n, a0, span });
         }
         if (pick) {
           for (const v of list) {
-            const q = move(pick, V[v * 3], V[v * 3 + 1], V[v * 3 + 2], false); const r = move(pick, N[v * 3], N[v * 3 + 1], N[v * 3 + 2], true);
+            const q = move(pick, V[v * 3], V[v * 3 + 1], V[v * 3 + 2], false, own.along[v]); const r = move(pick, N[v * 3], N[v * 3 + 1], N[v * 3 + 2], true);
             for (let s = 0; s < 3; s++) { V[v * 3 + s] = q[s]; N[v * 3 + s] = r[s]; }
           }
           pts = moved(pts, pick); changed++;

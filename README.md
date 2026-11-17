@@ -1,10 +1,40 @@
-# Canopy — a foliage maker
+# Canopy: a node-based foliage creator
 
-Canopy builds trees, shrubs, grass and flowers from a small graph of nodes, and shows the plant live in 3D right
-behind the graph. It runs in the browser, installs as an app on Windows and Android tablets, and exports game-ready
-meshes with their textures.
+*From an artist, for the artists.*
+
+Canopy is an intuitive, minimal and lightweight tool for node-based procedural foliage. Trees, shrubs, grass and
+flowers grow from a small graph of nodes, live in 3D beside the graph. It works on every device, online and offline
+once loaded, with builds for Windows and Android, and exports game-ready meshes with their textures.
+
+![Canopy: a broadleaf tree in the 3D view, with its four nodes in the graph](public/docs/img/viewport.png)
 
 **Open it:** https://7bajwa.github.io/Canopy/ (works offline once opened; use the browser menu to install it).
+
+**Download the latest version:**
+[Windows (.zip)](https://github.com/7bajwa/Canopy/releases/latest/download/Canopy-Windows-x64.zip) ·
+[Android (.apk)](https://github.com/7bajwa/Canopy/releases/latest/download/Canopy-Android.apk) ·
+[all releases](https://github.com/7bajwa/Canopy/releases)
+
+**Documentation:** [the node reference and guide](https://7bajwa.github.io/Canopy/docs/index.html).
+
+| Welcome | Settings |
+|---|---|
+| ![The welcome window](public/docs/img/welcome.png) | ![Settings, Interface tab](public/docs/img/settings.png) |
+
+## At a glance
+
+- **Nodes, not menus:** a Spline node is one whole part of a plant (line, placement, mesh, material, wind); chain
+  them parent to child to grow trunk, branches, twigs and leaves. A Growth node grows a whole tree by light and gravity.
+- **Every value can vary and follow a curve:** variation in Percent or Absolute, curves along the line, along any
+  parent, or across the whole plant.
+- **Leaf cutouts from a texture atlas,** shaped in 2D and 3D; Atlas Bake, Cards bake, Scan Bake and Texture Pack for
+  game engines; LODs.
+- **Export** FBX, OBJ, glTF/GLB with textures and wind vertex colors, or send straight to Blender.
+- **Your workspace:** windows that move and resize, a toolbar you can scroll, resize into rows or fold away, a status
+  bar that explains what is under the pointer, shortcuts you can change, metric or imperial units.
+- **Your work is safe:** Save and Save As, and dated backups every 15 minutes into Documents/Canopy.
+
+Created with passion and AI by **Amanpreet Bajwa**: [7bajwa.github.io](https://7bajwa.github.io/).
 
 ## Video: a quick rundown
 
@@ -55,12 +85,12 @@ whole plant).
 
 ## Spline settings, tab by tab
 
-**Spline** — Length, **Segments** (Relative: a point every *Segment length*, so longer lines get more; Absolute: every
+**Spline**: Length, **Segments** (Relative: a point every *Segment length*, so longer lines get more; Absolute: every
 line gets the same *Segment count*), the wire color in the view, and a stack of modifiers: noise, gravity, random and
 radial bends, spirals, collisions with the floor or objects, and **Avoid intersections** (push a line aside from lines
 grown before it, trim it where it touches, or prune it).
 
-**Placement** — Where lines start:
+**Placement**: Where lines start:
 - *Point*, *Line*, *Ring*, *Urchin* (lines spread over a ball, like a sea urchin) at the origin or each parent's tip,
 - *Spline* along the parent (spiral, alternate, pairs, whorls; density, start and end, the tip, where each tip leaf
   gets its own scale, angle and turn when they vary),
@@ -69,28 +99,28 @@ grown before it, trim it where it touches, or prune it).
 - *Transform*: position, rotation and scale per axis, in the entity's **Local** axes (X to its side, Z the way it
   heads) or in **World** axes (the gizmo's, Z up).
 
-**Mesh** — What wraps the line. **Tube**, **Leaf** and **Cutout** are switches, so one line can carry a tube and
+**Mesh**: What wraps the line. **Tube**, **Leaf** and **Cutout** are switches, so one line can carry a tube and
 leaves together (a palm frond's stem and blades); the tube can then have its own material.
 - *Tube*: thickness (with its curve), sides, **Relative thickness** with its **Factor** (never thicker than the parent
   times the factor), start/finish and rotation.
 - *Caps*: a top cap (on by default) and an optional bottom cap, each with segments, height, a **profile** curve
   (rim on the left, middle on the right; flatten it for a flat cut) and a **border** (a ring of bark around the cut
   wood, for broken branches). Cap UVs continue the bark or lay a round patch of the texture.
-- *Blend*: welds a branch into its parent, and a line with no parent into the floor (trunk flares) — height, spread,
+- *Blend*: welds a branch into its parent, and a line with no parent into the floor (trunk flares): height, spread,
   smoothness, buttress roots, root depth and turn, **offset** (leans the spread toward a branch's underside; 0 is even),
   collar, sink, quality, normal and texture cross-fade.
-- *Leaf* and *Cutout*: blades along the line, or leaves cut from a texture atlas with their opacity — fold, curl,
+- *Leaf* and *Cutout*: blades along the line, or leaves cut from a texture atlas with their opacity: fold, curl,
   angle, bend, twist (its curve shapes where the leaf turns), 2-sided, soft canopy normals, and **Blend into parent**
   (the base of each leaf wraps onto its branch).
 - *Mesh modifiers*: noise (with variation per piece and a curve from base to tip), displacement, inflate, wave, jitter, smooth, subdivide, ripple, **Thickness** (gives a leaf
   a back and sides; pinch the side columns only, with separate upper and lower profiles across the leaf) and
   **Avoid intersections** (push points out along their normals, or prune leaves and pieces that run into others).
 
-**Material** — The scene material (color, texture, normal, roughness, opacity, translucency), color variation,
+**Material**: The scene material (color, texture, normal, roughness, opacity, translucency), color variation,
 vertex colors (baked ambient occlusion, gradients along the length and by height) and UVs: tiling, offset, flip,
 repeat by distance, twist, and **cap UVs** (continue the bark over the caps, or lay a round patch on them).
 
-**Wind** — Sway power and speed, leaf flutter, and how the bend builds up from the base; presets for grass, stems,
+**Wind**: Sway power and speed, leaf flutter, and how the bend builds up from the base; presets for grass, stems,
 bushes, trunks, branches, leaves and palms.
 
 ## Leaf cutouts from an atlas

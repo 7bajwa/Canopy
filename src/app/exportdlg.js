@@ -13,6 +13,7 @@ import { lineOf, lineExtents, windColors, pivotElements, pivotTextures, pivotUvs
 import { bakeCards } from './cards.js';
 import { WIND_STRIDE } from '../engine/wind.js';
 import { lifeOf, snowAt } from '../engine/life.js';
+import { movable } from './winmove.js';
 
 const opts = { lodsOn: false, billboard: 'last', nanite: false, layout: 'custom', format: 'glb', pack: true, group: 'node', ch: ['none', 'none', 'none', 'none'], pivot: false, vat: false, frames: 30, seconds: 2, strength: 5, rig: false, batch: 'separate' };
 const GRADIENTS = [['none', 'Keep color'], ['height', 'Height, bottom to top'], ['branch', 'Branch, start to end'], ['leaf', 'Leaf, start to end (flutter)'], ['random', 'Random per piece (phase)'], ['bend', 'Bend, trunk to tips']];
@@ -127,6 +128,7 @@ export function openExport(view, toast, batch = null) {
   addon.href = './blender/canopy_blender.py'; addon.download = 'canopy_blender.py';
   card.append(el('h2', '', 'Export'), body, row, addon);
   root.replaceChildren(card);
+  movable(card, card.querySelector('h2'), 'export');
   root.hidden = false;
   go.focus();
 }

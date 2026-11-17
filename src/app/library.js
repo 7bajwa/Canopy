@@ -4,6 +4,7 @@ const CATEGORIES = ['All', 'Trees', 'Bushes', 'Flowers', 'Grass', 'Vines', 'Misc
 const REQUEST = 'mailto:amanpreetbajwa7@gmail.com?subject=Canopy%20asset%20request';
 import { el } from './fields.js';
 import { readSample } from './io.js';
+import { movable } from './winmove.js';
 
 export function makeLibrary({ openSample, toast }) {
   let root = null; let tab = 'All';
@@ -49,6 +50,7 @@ export function makeLibrary({ openSample, toast }) {
     foot.append(el('p', 'hint', 'Plants to start from, with their own textures. Open one, change it, save it as your own.'), ask);
     card.append(head, tabs, grid, foot);
     root.replaceChildren(card);
+    movable(card, head, 'library');
     root.hidden = false;
     close.focus();
   }

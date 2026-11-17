@@ -1,19 +1,11 @@
 // The scale indicator: a flat figure and a ruler standing beside the plant. Figures are drawn here, so the app ships no image files.
 import * as THREE from 'three';
 import { rulerMarks, showLength } from './units.js';
+import { FIGURES, figureFor } from './figures.js';
+
+export { FIGURES, figureFor };
 
 const INK = '#b7c2ad';
-
-// Silhouettes of a baby, a boy and a man, chosen by the plant's size. Heights in cm; aspect is width / height.
-const FIGURES = {
-  baby: { height: 40, aspect: 272 / 512, under: 60 },
-  boy: { height: 100, aspect: 162 / 512, under: 170 },
-  man: { height: 180, aspect: 167 / 512, under: Infinity },
-};
-
-export function figureFor(plantHeight) {
-  return Object.entries(FIGURES).find(([, f]) => plantHeight < f.under)[0];
-}
 
 function canvasTexture(w, h, paint) {
   const c = document.createElement('canvas');
@@ -42,34 +34,34 @@ export class ScaleIndicator {
     this.key = '';
   }
 
-  figureTexture(name) {
-    let t = this.textures.get(name);
+  figureTexture(f) {
+    let t = this.textures.get(f.id);
     if (!t) {
-      t = new THREE.TextureLoader().load(`./figures/${name}.png`, () => this.onChange());
-      t.colorSpace = THREE.SRGBColorSpace;
-      t.anisotropy = 4;
-      this.textures.set(name, t);
+      const H = 1024; const W = Math.ceil(H * f.w / f.h);
+      t = canvasTexture(W, H, (c) => { c.scale(W / f.w, H / f.h); c.fill(new Path2D(f.d), 'evenodd'); });
+      this.textures.set(f.id, t);
     }
     return t;
   }
 
   // Redraws only when something a person could read has changed.
-  update(box, show, units) {
+  update(box, show, units, enabled = {}) {
     if (!box || show === 'off') { this.group.visible = false; return; }
     this.group.visible = true;
     const plantH = Math.max(box[4] - Math.min(0, box[1]), 1);
-    const name = figureFor(plantH);
-    const f = FIGURES[name];
-    const showFig = show !== 'ruler'; const showRuler = show !== 'figure';
+    const f = figureFor(plantH, enabled);
+    const showFig = show !== 'ruler' && !!f; const showRuler = show !== 'figure';
     this.figure.visible = showFig; this.ruler.visible = showRuler;
-    const key = `${name}|${Math.round(plantH)}|${units}`;
-    this.size = { fw: f.height * f.aspect, fh: f.height, H: Math.max(plantH, showFig ? f.height : 0) };
+    const key = `${f?.id}|${Math.round(plantH)}|${units}|${show}|${JSON.stringify(enabled)}`;
+    this.size = f ? { fw: f.height * f.w / f.h, fh: f.height, H: Math.max(plantH, showFig ? f.height : 0) } : { fw: 0, fh: 0, H: plantH };
     this.box = box;
     if (key === this.key) return;
     this.key = key;
-    this.figure.material.map = this.figureTexture(name);
-    this.figure.material.needsUpdate = true;
-    this.figure.scale.set(this.size.fw, this.size.fh, 1);
+    if (f) {
+      this.figure.material.map = this.figureTexture(f);
+      this.figure.material.needsUpdate = true;
+      this.figure.scale.set(this.size.fw, this.size.fh, 1);
+    }
     const H = this.size.H;
     this.ruler.material.map?.dispose();
     this.ruler.material.map = canvasTexture(256, 1280, (c, cw, ch) => {
